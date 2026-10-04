@@ -1,16 +1,12 @@
-name: Reusable Linux Build
+name: Build Linux (aarch64)
 
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
       source_ref:
+        description: 'Git ref (branch, tag, or SHA) to build'
         required: true
         type: string
-    secrets:
-      TAURI_SIGNING_PRIVATE_KEY:
-        required: false
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
-        required: false
 
 permissions:
   contents: read
