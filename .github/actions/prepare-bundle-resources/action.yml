@@ -172,6 +172,17 @@ runs:
 
         node scripts/bundle-metadata.mjs --manifest --platform "$PLATFORM" --arch "$ARCH" $git_flag
 
+    # 目标平台的原生可选依赖必须随包，否则首次启动会现场 `npm install`
+    # （sharp/koffi 的平台包），离线机器上必然失败：`CORE_NATIVE_DEPENDENCY_REPAIR_TIMEOUT`。
+    # Linux 的 pkg 发行包只有一份（与架构无关），带的是 x64 原生包，aarch64 就落在
+    # 这个坑里。脚本用随包 Node 先探测、只在探测失败时按核心清单补齐，再复探一次。
+    - name: Seed target-platform native modules
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+        ARCH: ${{ inputs.arch }}
+      run: node scripts/bundle-native-deps.mjs --platform "$PLATFORM" --arch "$ARCH"
+
     - name: Verify bundled entries
       shell: bash
       env:

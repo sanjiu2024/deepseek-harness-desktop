@@ -50,6 +50,11 @@
       "infoPlist": "Info.plist",
       "entitlements": "Entitlements.plist"
     },
+    "linux": {
+      "deb": {
+        "postInstallScript": "./debian/postinst.sh"
+      }
+    },
     "windows": {
       "nsis": {
         "template": "templates/installer.nsi",

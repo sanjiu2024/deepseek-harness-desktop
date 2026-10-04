@@ -9,6 +9,13 @@ on:
       dsh_tag:
         required: true
         type: string
+      arch:
+        description: >-
+          目标架构（all | x64 | arm64）。arm64 走 GitHub 的 ubuntu-22.04-arm
+          runner；只想要其中一个架构时传对应值，省一半构建时间。
+        required: false
+        type: string
+        default: all
     secrets:
       TAURI_SIGNING_PRIVATE_KEY:
         required: false
@@ -20,10 +27,20 @@ permissions:
 
 jobs:
   build:
-    name: Build offline bundle (linux)
+    name: Build offline bundle (linux-${{ matrix.arch }})
     # 22.04 的 glibc/WebKitGTK 产物兼容 Ubuntu 22.04 及更新版本。
-    runs-on: ubuntu-22.04
+    # arm64 用 arm 版 runner：x86_64 runner 上交叉编译出的产物无法在本机跑 e2e，
+    # 且 Tauri 的 AppImage/deb 打包工具链也只对目标架构保证可用（与 build-linux.yml
+    # 的 aarch64 任务同一条理由）。
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-22.04-arm' || 'ubuntu-22.04' }}
     timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        # 只想要一个架构时矩阵退化成单元素，省一半构建时间。矩阵必须在这里由
+        # 表达式展开：`matrix` 上下文在 jobs.<id>.if 里不可用（只在 steps.if 里可用），
+        # 所以在 job 级用 `if` 过滤矩阵条目是行不通的。
+        arch: ${{ fromJSON(inputs.arch == 'all' && '["x64","arm64"]' || format('["{0}"]', inputs.arch)) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -65,27 +82,74 @@ jobs:
         uses: ./.github/actions/prepare-bundle-resources
         with:
           platform: linux
-          arch: x64
+          arch: ${{ matrix.arch }}
           dsh-tag: ${{ inputs.dsh_tag }}
 
       # 只出 deb：AppImage 由 linuxdeploy 打包，而离线包往 AppDir 里塞了 300 MiB /
       # 一万余文件，linuxdeploy 在这种规模的 AppDir 上直接失败（普通安装包没有这份
       # 资源所以不受影响）。内网离线部署本来也以 deb 为主；AppImage 留作后续单独排查。
       #
-      # 已知限制：deb 把资源装到 /usr/lib/<product>/（root 所有），随包 dsh 内核因此
-      # 只读。桌面端每次启动会往内核目录写插件入口链接与 JS 补丁（见
-      # `service::core::runtime::link_required_plugins`），非 root 用户运行时会失败。
-      # 需要 root 安装后补齐目录权限，或改用 Windows/macOS 产物。
+      # 随包内核的属主由 deb 的 postinst 接管（`bundle.linux.deb.postInstallScript`
+      # → `src-tauri/debian/postinst.sh`）：deb 把资源装到 /usr/lib/<product>/（root
+      # 所有），而桌面端启动时必须往内核根写内置插件入口与 JS 补丁，写不进去
+      # `prepare_active_runtime` 就放弃启动（= 非 root 用户直接起不来）。安装脚本以
+      # root 运行，把整棵随包资源树的属主交给安装用户，升级重装时会再跑一遍。
+      # 下面的校验步骤会确认 postinst 与随包内核真的进了 deb —— 少了任一个，产出的
+      # 就是「装了也起不来」的包，必须在构建期失败而不是留到用户机器上。
       - name: Build offline packages
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --bundles deb
 
+      - name: Verify packaged deb
+        shell: bash
+        env:
+          # Tauri 的 deb 架构名（x64 → amd64）
+          expected_arch: ${{ matrix.arch == 'arm64' && 'arm64' || 'amd64' }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          debs=(src-tauri/target/release/bundle/deb/*.deb)
+          [ "${#debs[@]}" -eq 1 ] || { echo "::error::expected exactly one deb, got ${#debs[@]}"; exit 1; }
+          deb="${debs[0]}"
+
+          arch="$(dpkg-deb -f "$deb" Architecture)"
+          [ "$arch" = "$expected_arch" ] || {
+            echo "::error::deb architecture is $arch, expected $expected_arch"
+            exit 1
+          }
+
+          control="$(mktemp -d)"
+          dpkg-deb -e "$deb" "$control"
+          # postinst 缺失 = 随包内核在 /usr/lib 下 root 所有，非 root 用户启动必失败
+          # （见 debian/postinst.sh 的模块说明）。只告警等于把这个坑留给用户。
+          [ -x "$control/postinst" ] || {
+            echo "::error::deb has no executable postinst; check bundle.linux.deb.postInstallScript in src-tauri/tauri.conf.json (bundling runs with CWD = src-tauri, so the path is relative to it)"
+            exit 1
+          }
+
+          # 随包内核入口必须真的在包里：resources 的 glob 或解压层级变化会让应用在
+          # 启动时判定「依赖缺失」并转去联网下载 —— 离线机器上必然失败。
+          contents="$(dpkg-deb -c "$deb")"
+          while read -r entry; do
+            grep -q "resources/${entry}$" <<<"$contents" || {
+              echo "::error::bundled entry missing from deb: resources/${entry}"
+              exit 1
+            }
+          done <<'ENTRIES'
+          dsh/node_modules/@deepseek-ai/dsh/lib/bin.js
+          node/bin/node
+          pnpm/bin/pnpm.cjs
+          ENTRIES
+
+          echo "verified ${deb##*/}: arch=$arch, postinst present, bundled core present"
+          du -h "$deb"
+
       - name: Upload build outputs
         uses: actions/upload-artifact@v6
         with:
-          name: release-bundle-linux
+          name: release-bundle-linux-${{ matrix.arch }}
           path: src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
           retention-days: 7

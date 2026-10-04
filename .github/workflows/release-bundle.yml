@@ -41,6 +41,15 @@ on:
         required: false
         default: false
         type: boolean
+      linux_arch:
+        description: Linux 离线包的架构（all | x64 | arm64）
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - x64
+          - arm64
 
 permissions:
   # 写权限只给真正上传产物的 finalize；prepare 与三个可复用构建只需要读。
@@ -259,6 +268,8 @@ jobs:
     with:
       source_ref: ${{ needs.prepare.outputs.source_ref }}
       dsh_tag: ${{ needs.prepare.outputs.dsh_tag }}
+      # 自动路径（workflow_run）没有 inputs，按 all 出 x64 + arm64 两个 deb。
+      arch: ${{ github.event_name == 'workflow_dispatch' && inputs.linux_arch || 'all' }}
     secrets:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -288,8 +299,10 @@ jobs:
           path: release-assets
 
       # 统一命名为 Deepseek.Harness.Desktop_Bundle_<version>.<ext>：与普通安装包
-      # （Tauri 默认名）区分，且同一 release 内不会重名。macOS 两个架构的产物
-      # 扩展名相同，必须带架构后缀才不会互相覆盖。
+      # （Tauri 默认名）区分，且同一 release 内不会重名。macOS 两个架构成品扩展名
+      # 相同、Linux 两个架构成品扩展名也相同，必须带架构后缀才不会互相覆盖；
+      # x64 沿用无后缀的旧名字，arm64 加 `_aarch64`（不重命名既有产物，避免破坏
+      # 已有部署脚本里写死的文件名）。
       - name: Rename offline installers
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -303,6 +316,7 @@ jobs:
             case "$artifact" in
               *macos-aarch64*) suffix="_aarch64" ;;
               *macos-x86_64*) suffix="_x64" ;;
+              *linux-arm64*) suffix="_aarch64" ;;
             esac
             for file in "$dir"*; do
               [ -f "$file" ] || continue

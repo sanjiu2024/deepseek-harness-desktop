@@ -128,6 +128,19 @@ pins in `src-tauri/src/config/constants.rs`). Versions and download prefixes are
 that same file, and the core version from this manifest's `engines.dsh.recommend`, so the
 bundle never drifts from what the app would otherwise download.
 
+The unpacked core must also carry the **target platform's** native optional dependencies
+(`sharp` / `koffi`). The Linux package is a single arch-independent
+`deepseek-harness-pkg-linux.zip` shipping the x64 builds, while the desktop probes those
+modules on every launch: a missing platform package makes it run `npm install` for
+`@img/sharp-<platform>-<arch>` / `@img/sharp-libvips-<platform>-<arch>` /
+`@koromix/koffi-<platform>-<arch>`, which cannot succeed on an offline machine and aborts
+startup with `CORE_NATIVE_DEPENDENCY_REPAIR_TIMEOUT` — the bundle would install but never
+start. `scripts/bundle-native-deps.mjs` therefore probes the unpacked core with the bundled
+Node and, only when the probe fails, installs the exact versions named by that core's own
+`optionalDependencies` (mirroring `runtime::native_package_plan`) into
+`resources/dsh/node_modules`, then re-probes; if the modules still cannot load, the build
+fails instead of publishing a package that cannot start.
+
 The step then rewrites **this file** so every bundled dependency resolves through the
 installer's own resources:
 
@@ -162,10 +175,25 @@ resolves to a verbatim path, which is handed to node as its main module — and 
 so the bundled core could never start.
 
 The bundled core is used in place, so the install directory must stay writable for the
-desktop's startup patches and plugin entry links — true for the per-user NSIS install, not
-for `/usr/lib/**` in the Linux deb (documented limitation). Community/preset plugins are
+desktop's startup patches and plugin entry links — true for the per-user NSIS install, and
+on Linux made true by the deb's `postinst` (`src-tauri/debian/postinst.sh`, wired through
+`bundle.linux.deb.postInstallScript`): `/usr/lib/<product>/resources` is unpacked
+root-owned, so the script (which dpkg runs as root) hands the whole bundled resource tree
+to the installing user. Without it the startup repair writes into
+`resources/dsh/node_modules` fail with `EACCES` and `prepare_active_runtime` refuses to
+start (`link_required_plugins`), i.e. a non-root user could not launch an offline deb at
+all. The script is idempotent and re-runs on every upgrade; it never fails the install —
+when it cannot tell which user runs the desktop app it prints a copy-pasteable `chown`
+instead. Both Linux architectures are built (`linux_arch`: `all` | `x64` | `arm64`;
+arm64 runs on `ubuntu-22.04-arm`). Community/preset plugins are
 still installed from the network; the offline bundle only removes the *first-launch*
 dependency downloads.
+
+Because `dsh` stays overridable, an `<app-data>/dependencies.json` written by an earlier
+non-bundled install keeps winning as long as the recorded core still exists — so on a
+machine upgrading from a downloaded core, select the bundled entry in the core panel (or
+write `"dsh": "$Resources/dsh"` into that file) to switch to the built-in core. Fresh
+offline machines have no such record and use `$Resources/dsh` directly.
 
 ### Preset plugins — `plugins.preset`
 
