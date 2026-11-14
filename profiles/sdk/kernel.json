@@ -1,0 +1,5 @@
+{
+  "package": "@deepseek-ai/dsh",
+  "version": "0.2.2-rc.3",
+  "note": "Pinned kernel version. Bumping this is a normal one-line diff plus a checksum refresh. Upstream requires Node >= 24.9."
+}

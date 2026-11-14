@@ -1,0 +1,7 @@
+packages:
+  - apps/*
+
+# pnpm 12 blocks postinstall scripts by default. These are the only ones we
+# actually need: esbuild ships a platform binary as a build step.
+allowBuilds:
+  esbuild: true

@@ -1,0 +1,21 @@
+# Profile patch applied on top of the kernel's `sdk` profile.
+# Anything here overrides the shipped composition; keep it minimal and justified.
+
+# ── 1. Session log encoding ──────────────────────────────────────────────
+# Upstream defaults to zstd-compressed frames, which must be read through its
+# own backend. We only ever read, so plain NDJSON is the cheaper path: the
+# client parses it with serde_json and no decoder. Costs 3-5x disk, which is
+# acceptable for a single-user desktop app.
+- id: session-persistence-jsonl
+  config:
+    compression: 'none'
+
+# ── 2. Session titles ────────────────────────────────────────────────────
+# The SDK profile already disables LLM-generated titles (no title surface on
+# the wire). Deterministic fallback titles stay; do not re-enable the LLM row.
+- id: session-title-llm
+  disabled: true
+
+# ── 3. Keep the runtime quiet on stdout ──────────────────────────────────
+# stdout is the JSON-RPC channel. Anything chatty must not land there.
+# (The kernel already routes logs to stderr; this is a guard, not a fix.)

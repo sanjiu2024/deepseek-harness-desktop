@@ -1,0 +1,39 @@
+# ── 构建产物 ───────────────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+target/
+*.tsbuildinfo
+.vite/
+# Tauri regenerates these on every build; they are not source.
+apps/desktop/src-tauri/gen/
+
+# ── 内核运行时（由 scripts/fetch-kernel.mjs 拉取，不入库）─────
+kernel/
+runtime/
+.kernel-staging/
+.smoke-home/
+
+# ── 用户数据（绝不入库）──────────────────────────────────────
+dsh-home/
+profiles/*/cordis.patch.local.yml
+
+# ── 密钥 ───────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+.credentials.yaml
+
+# ── 上游源码（本机只读参考，不是本项目的代码）─────────────────
+deepseek-harness/
+
+# ── 编辑器 / 系统 ──────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+*.swp

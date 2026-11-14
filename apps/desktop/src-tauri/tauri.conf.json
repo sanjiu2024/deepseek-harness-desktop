@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "DeepSeek Harness Desktop",
+  "version": "0.0.1",
+  "identifier": "com.sanjiu2024.dsh-desktop",
+  "build": {
+    "beforeDevCommand": "pnpm --filter @dsh-desktop/app dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm --filter @dsh-desktop/app build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "DeepSeek Harness Desktop",
+        "width": 1280,
+        "height": 840,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Desktop client for the DeepSeek Harness agent kernel",
+    "longDescription": "A Tauri 2 desktop client for the DeepSeek Harness agent kernel, with a React front end and a Rust core that drives the kernel over its SDK wire protocol.",
+    "resources": {
+      "../../../profiles/sdk/*": "profiles/sdk/"
+    }
+  }
+}
