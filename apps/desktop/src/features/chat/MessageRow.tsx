@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Markdown } from '@/components/markdown.tsx'
 import type { Message, MessagePart, ToolCall } from '@/lib/reducer.ts'
 
@@ -47,16 +47,24 @@ export function MessageRow({ message, live = false }: { message: Message; live?:
  */
 function ReasoningBlock({ parts, live }: { parts: MessagePart[]; live: boolean }) {
   const [open, setOpen] = useState(live)
+  // A manual toggle is an instruction, not a default: once the user has opened
+  // or closed this trace, the streaming state stops moving it.
+  const touched = useRef(false)
   const text = parts.map((part) => part.text).join('')
 
   useEffect(() => {
     if (live) setOpen(true)
+    else if (!touched.current) setOpen(false)
   }, [live])
 
   return (
     <details
       open={open}
-      onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(event) => {
+        const element = event.currentTarget as HTMLDetailsElement
+        if (element.open !== open) touched.current = true
+        setOpen(element.open)
+      }}
       className="border-border/70 rounded-md border"
     >
       <summary className="text-muted-foreground cursor-pointer px-2 py-1 text-xs select-none">
