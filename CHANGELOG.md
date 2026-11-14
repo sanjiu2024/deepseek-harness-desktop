@@ -4,6 +4,36 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] — 2026-11-15
+
+The handle tool grew a shared library, and the project directory turned out to be the poisoned
+part.
+
+### Added
+
+- `scripts/lib/holders.mjs` — the Restart Manager query as a module, so the `handles` CLI and a
+  launcher can share it instead of shelling out to each other.
+
+### Found — measured, not inferred
+
+- The same executable starts fine from `%TEMP%`, from `D:\cargo-test`, and from
+  `D:\space test dir` (spaces are not the problem), and fails from **every** path inside
+  `D:\deepseek harness desktop` — `target\debug\`, `target\run\`, `plain\`. Same binary, same
+  environment, same profile directory. Whatever breaks WebView2 creation is keyed to the project
+  path.
+- Lockers observed on this machine, in order: `tailscale-ipn` (holds the built exe),
+  `clash-verge` (holds it persistently, 30s+). Killing the first frees the exe; the second is
+  the user's proxy, so killing it costs network access.
+- `esbuild` also fails on this machine with `remove ...temp\esbuild-...: Access is denied` —
+  its own cleanup file is taken by something else. Intermittent; a rerun usually works.
+
+### Not done
+
+- A launcher that builds into `target/` and runs a copy from outside the repository was written
+  and **reverted**: it was not verified end to end, and shipping an unverified dev loop is worse
+  than shipping none. The blocker is the esbuild temp-file failure above, not the design.
+- `scripts/dev.mjs` is unchanged from 0.6.2 — the version that was actually run.
+
 ## [0.6.2] — 2026-11-15
 
 Added a tool that names the culprit, because the error text never does.
