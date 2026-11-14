@@ -83,7 +83,7 @@ export function BootPanel({ onReady }: { onReady: () => void }) {
       setPhase('handshaking')
       const result = await ipc.kernelInitialize({
         cwd: paths?.kernelDir ?? '.',
-        provider: 'deepseek-official',
+        provider: 'opencode-go',
         model: 'deepseek-v4.1-flash',
       })
       append('initialize', JSON.stringify(result))

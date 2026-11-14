@@ -188,13 +188,20 @@ fn patch_path() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../profiles/sdk/cordis.patch.yml")
 }
 
+/// Keys the kernel may need, passed through only when the app itself has them.
+///
 /// Credentials reach the kernel through its environment, never through a file
-/// inside this repository.
+/// in this repository — the profile patch names the variable, not the secret.
+const PROVIDER_KEYS: &[&str] = &["DEEPSEEK_API_KEY", "OPENCODE_API_KEY"];
+
 fn provider_env() -> Vec<(String, String)> {
-    match std::env::var("DEEPSEEK_API_KEY") {
-        Ok(key) if !key.is_empty() => vec![("DEEPSEEK_API_KEY".to_owned(), key)],
-        _ => Vec::new(),
-    }
+    PROVIDER_KEYS
+        .iter()
+        .filter_map(|name| match std::env::var(name) {
+            Ok(value) if !value.is_empty() => Some(((*name).to_owned(), value)),
+            _ => None,
+        })
+        .collect()
 }
 
 fn forward_frames(app: &AppHandle, client: &KernelClient) {

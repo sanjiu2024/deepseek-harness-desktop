@@ -46,12 +46,21 @@ describe('against a captured kernel stream', () => {
   })
 
   it('records the route from request/header', () => {
-    expect(state.route).toEqual({ provider: 'deepseek-official', model: 'deepseek-v4.1-flash' })
+    expect(state.route).toEqual({ provider: 'opencode-go', model: 'deepseek-v4.1-flash' })
   })
 
-  it('reports the turn failure rather than swallowing it', () => {
-    // No API key in the capture environment, so the turn ends in an error.
-    expect(state.failure).toContain('API key')
+  it('records the route the kernel actually used', () => {
+    expect(state.route).toEqual({ provider: 'opencode-go', model: 'deepseek-v4.1-flash' })
+  })
+
+  it('renders the answer and its reasoning as separate blocks', () => {
+    const assistant = state.messages.find((message) => message.role === 'assistant')
+    expect(assistant?.parts.map((part) => part.kind)).toEqual(['reasoning', 'text'])
+    expect(assistant?.parts.at(-1)?.text).toContain('deepseek-v4.1-flash')
+  })
+
+  it('completes a turn without reporting a failure', () => {
+    expect(state.failure).toBeNull()
   })
 
   it('leaves no turn active once turn/end has folded', () => {

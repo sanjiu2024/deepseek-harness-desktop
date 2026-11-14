@@ -4,6 +4,45 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-11-15
+
+First real model answer. And: the SDK protocol has no token-level streaming.
+
+### Added
+
+- `profiles/sdk/cordis.patch.yml` declares the `opencode-go` route (`llm-pi-ai` adapter; the
+  key is referenced by variable name and reaches the process through its environment).
+- `scripts/capture-events.mjs` honours `CAPTURE_PROVIDER` / `CAPTURE_MODEL` and passes our
+  profile patch, so a capture exercises the same composition the app runs.
+- The reducer handles `assistant/message`: content is a block array, and `reasoning` and `text`
+  are two blocks, not a prefix of the answer.
+- Tauri forwards `DEEPSEEK_API_KEY` and `OPENCODE_API_KEY`, but only when the app process
+  actually has them.
+
+### Found — the SDK wire has no streaming
+
+`assistant/live-chunk` is a **Web-client presentation event** (`AssistantLiveChunkEvent` in
+`dsh-api-session-controller`), produced from a separate follow connection. The SDK server
+forwards durable `session/event` rows only (`packages/sdk/server/src/server.ts:164`), and
+`assistant/chunk` is retired in format v4 — it survives only in historical migration code.
+
+Observed consequence: the whole `assistant/message` arrives when the turn ends; nothing
+incremental reaches the client in between.
+
+Three ways out, none taken yet:
+
+1. Accept whole-message arrival and show a "generating" state;
+2. Write a kernel-side plugin (mounted by profile patch, no source change) that re-emits the
+   assistant stream as notifications;
+3. Poll the session log — but the answer is not on disk before it completes either, so this
+   buys nothing.
+
+### Verified
+
+- `node scripts/capture-events.mjs` with `CAPTURE_PROVIDER=opencode-go` → 19 events, including
+  an `assistant/message` with a real answer and its reasoning.
+- `pnpm --filter @dsh-desktop/app test` → 22 passed, 8 of them against the captured fixture.
+
 ## [0.2.0] — 2026-11-15
 
 The session event reducer, built against a **captured** kernel stream rather than the docs.

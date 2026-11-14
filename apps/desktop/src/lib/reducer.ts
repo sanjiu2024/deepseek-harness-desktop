@@ -98,6 +98,9 @@ export function reduceEvent(state: ChatState, event: SessionEvent): ChatState {
         ? { ...next, messages: [...state.messages, userMessage(event)] }
         : next
 
+    case 'assistant/message':
+      return settleAssistantMessage(next, event)
+
     case 'assistant/live-chunk':
       return foldLiveChunk(next, event)
 
@@ -163,7 +166,16 @@ function userMessage(event: SessionEvent): Message {
   }
 }
 
-/** `assistant/live-chunk` carries one `StreamChunk`; only deltas and tool calls matter here. */
+/**
+ * `assistant/live-chunk` carries one `StreamChunk`.
+ *
+ * **This event does not exist on the SDK wire.** It is a Web-client presentation
+ * (`dsh-api-session-controller`), and the SDK server forwards only durable
+ * `session/event` rows. It is handled here anyway because a future kernel-side
+ * forwarder can re-emit it, and because a fake in tests is how the append rules
+ * get exercised without a network. Until that forwarder exists, an answer
+ * arrives whole, in {@link settleAssistantMessage}.
+ */
 function foldLiveChunk(state: ChatState, event: SessionEvent): ChatState {
   const chunk = read(event.data, 'chunk')
   const kind = asString(read(chunk, 'type'))
@@ -200,6 +212,44 @@ function foldLiveChunk(state: ChatState, event: SessionEvent): ChatState {
       // `block-start`, `block-end`, `usage`, `finish` carry no renderable text.
       return state
   }
+}
+
+/**
+ * The durable assistant message. This is the only place an answer arrives over
+ * the SDK wire — see the note on {@link foldLiveChunk} about why.
+ *
+ * Content is a block array, and a reasoning block is a separate block, not a
+ * prefix of the answer.
+ */
+function settleAssistantMessage(state: ChatState, event: SessionEvent): ChatState {
+  const message = read(event.data, 'message')
+  const content = read(message, 'content')
+  if (!Array.isArray(content)) return state
+
+  const parts: MessagePart[] = []
+  for (const block of content) {
+    const kind = asString(read(block, 'type'))
+    const text = asString(read(block, 'text'))
+    if (text === null) continue
+    if (kind === 'text' || kind === 'reasoning') parts.push({ kind, text })
+  }
+  if (parts.length === 0) return state
+
+  const messages = [...state.messages]
+  const last = messages.at(-1)
+  if (last === undefined || last.role !== 'assistant') {
+    messages.push({
+      id: `assistant-${event.seq}`,
+      role: 'assistant',
+      parts,
+      tools: [],
+      time: event.time,
+      seq: event.seq,
+    })
+    return { ...state, messages }
+  }
+  messages[messages.length - 1] = { ...last, parts, seq: event.seq }
+  return { ...state, messages }
 }
 
 /** Replace the accumulated deltas with the attempt's own durable text. */

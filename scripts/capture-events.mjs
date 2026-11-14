@@ -35,7 +35,9 @@ rmSync(home, { recursive: true, force: true })
 mkdirSync(home, { recursive: true })
 mkdirSync(fixtureDir, { recursive: true })
 
-const child = spawn(process.execPath, [entry, '--profile', 'sdk'], {
+const patch = join(root, 'profiles', 'sdk', 'cordis.patch.yml')
+
+const child = spawn(process.execPath, [entry, '--profile', 'sdk', '--patch', patch], {
   cwd: root,
   env: { ...process.env, DSH_HOME: home, DSH_TELEMETRY_DISABLED: '1' },
   stdio: ['pipe', 'pipe', 'pipe'],
@@ -86,7 +88,7 @@ let nextId = 1
 
 const initialized = await call('initialize', {
   cwd: root,
-  provider: 'deepseek-official',
+  provider: process.env.CAPTURE_PROVIDER ?? 'deepseek-official',
   model: process.env.CAPTURE_MODEL ?? 'deepseek-v4.1-flash',
   approvalRequests: true,
   capabilities: { userQuestions: true },

@@ -19,3 +19,14 @@
 # ── 3. Keep the runtime quiet on stdout ──────────────────────────────────
 # stdout is the JSON-RPC channel. Anything chatty must not land there.
 # (The kernel already routes logs to stderr; this is a guard, not a fix.)
+
+# ── 4. Provider routes ───────────────────────────────────────────────────
+# The base mounts `llm-pi-ai` dormant: it registers nothing until a provider
+# profile exists. Declaring `opencode-go` here is what activates that route.
+# The key is referenced by name only — the value reaches the process through its
+# environment, so no secret ever lands in this repository.
+- id: llm-pi-ai
+  config:
+    providers:
+      opencode-go:
+        apiKeyEnv: OPENCODE_API_KEY
