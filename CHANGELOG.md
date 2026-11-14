@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-11-15
+
+First run in a real window. Two problems surfaced immediately.
+
+### Fixed
+
+- **A failed turn rendered as nothing at all.** The reducer recorded `failure`; the view never
+  read it. The user saw a prompt, a blank panel, and the input box still there. There is now a
+  failure banner quoting the kernel's own message (`MISSING_CREDENTIAL` names the variable that
+  is missing). A new turn clears the previous failure.
+- **`pnpm tauri dev` died on `[pnpm] pnpm not found`.** The DeepSeek Harness Desktop installer
+  puts its command shims in `%LOCALAPPDATA%\deepseek-harness\bin` ahead of the npm global bin,
+  and its `pnpm.cmd` refuses to run until the managed pnpm exists. Added `scripts/dev.ps1`:
+  it moves the real pnpm ahead **for its own process only**, sets the three `DSH_DESKTOP_*`
+  variables, and starts tauri. Nothing machine-wide changes.
+
+### Added
+
+- `provider.env` in the kernel home (git-ignored, one `KEY=value` per line, process environment
+  wins): no need to export the key in every shell.
+
+### Verified
+
+- Real window screenshot: title, user message, input box, and the unrendered-event list all
+  render; `seq 18` means the stream reached `turn/end`.
+- `cargo test -p dsh-desktop-app` → 2 passed (env-file parsing).
+- `pnpm --filter @dsh-desktop/app test` → 30 passed.
+
 ## [0.4.0] — 2026-11-15
 
 Streaming works. The kernel's live assistant stream now reaches the client token by token.

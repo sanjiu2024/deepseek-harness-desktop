@@ -76,6 +76,53 @@ impl AppState {
             .clone()
             .ok_or_else(|| "the kernel is not running".to_owned())
     }
+
+    /// Provider keys for the kernel process.
+    ///
+    /// Two sources, in priority order: this process's environment, then
+    /// `provider.env` in the kernel home (`KEY=value` per line, `#` comments).
+    /// The file exists so a development run does not need the variable exported
+    /// in every shell; it is git-ignored by name and never enters the repository.
+    pub fn provider_env(&self) -> Vec<(String, String)> {
+        let mut keys: Vec<(String, String)> = PROVIDER_KEYS
+            .iter()
+            .filter_map(|name| match std::env::var(name) {
+                Ok(value) if !value.is_empty() => Some(((*name).to_owned(), value)),
+                _ => None,
+            })
+            .collect();
+
+        for (name, value) in read_env_file(&self.dsh_home.join("provider.env")) {
+            if !PROVIDER_KEYS.contains(&name.as_str()) {
+                continue;
+            }
+            if keys.iter().any(|(existing, _)| existing == &name) {
+                continue;
+            }
+            keys.push((name, value));
+        }
+        keys
+    }
+}
+
+/// Keys the kernel may need; anything else in `provider.env` is ignored.
+const PROVIDER_KEYS: &[&str] = &["DEEPSEEK_API_KEY", "OPENCODE_API_KEY"];
+
+/// Parse a minimal `KEY=value` file. Unreadable is normal, not an error.
+fn read_env_file(path: &std::path::Path) -> Vec<(String, String)> {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    raw.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| {
+            let (name, value) = line.split_once('=')?;
+            let name = name.trim();
+            let value = value.trim().trim_matches('"').trim_matches('\'').trim();
+            (!name.is_empty() && !value.is_empty()).then(|| (name.to_owned(), value.to_owned()))
+        })
+        .collect()
 }
 
 fn bridge_package_name(dir: &std::path::Path) -> Result<String, String> {
@@ -87,4 +134,33 @@ fn bridge_package_name(dir: &std::path::Path) -> Result<String, String> {
         .as_str()
         .map(str::to_owned)
         .ok_or_else(|| "bridge/package.json has no \"name\"".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn env_file_parsing_ignores_comments_and_blank_values() {
+        let dir = std::env::temp_dir().join(format!("dsh-env-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("provider.env");
+        std::fs::write(
+            &path,
+            "# a comment\n\nOPENCODE_API_KEY=oc_sk_test\nQUOTED=\"quoted value\"\nEMPTY=\n",
+        )
+        .expect("write file");
+
+        let parsed = read_env_file(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert!(parsed.contains(&("OPENCODE_API_KEY".to_owned(), "oc_sk_test".to_owned())));
+        assert!(parsed.contains(&("QUOTED".to_owned(), "quoted value".to_owned())));
+        assert!(!parsed.iter().any(|(name, _)| name == "EMPTY"));
+    }
+
+    #[test]
+    fn missing_env_file_is_not_an_error() {
+        assert!(read_env_file(std::path::Path::new("does-not-exist.env")).is_empty());
+    }
 }

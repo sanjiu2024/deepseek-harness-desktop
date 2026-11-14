@@ -109,7 +109,11 @@ export function reduceEvent(state: ChatState, event: SessionEvent): ChatState {
       return finalizeAttempt(next, event)
 
     case 'turn/start':
-      return { ...next, active: { turn: asNumber(read(event.data, 'turn')) ?? 1, step: 0 }, failure: null }
+      return {
+        ...next,
+        active: { turn: asNumber(read(event.data, 'turn')) ?? 1, step: 0 },
+        failure: null,
+      }
 
     case 'step/start':
       return {

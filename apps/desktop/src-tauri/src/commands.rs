@@ -95,7 +95,7 @@ pub async fn kernel_start(app: AppHandle, state: State<'_, AppState>) -> Result<
         patches: vec![patch_path()],
         home: state.dsh_home.clone(),
         cwd: std::env::current_dir().map_err(|error| error.to_string())?,
-        env: provider_env(),
+        env: state.provider_env(),
     })
     .await
     .map_err(|error| error.to_string())?;
@@ -190,21 +190,6 @@ fn patch_path() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../profiles/sdk/cordis.patch.yml")
 }
 
-/// Keys the kernel may need, passed through only when the app itself has them.
-///
-/// Credentials reach the kernel through its environment, never through a file
-/// in this repository — the profile patch names the variable, not the secret.
-const PROVIDER_KEYS: &[&str] = &["DEEPSEEK_API_KEY", "OPENCODE_API_KEY"];
-
-fn provider_env() -> Vec<(String, String)> {
-    PROVIDER_KEYS
-        .iter()
-        .filter_map(|name| match std::env::var(name) {
-            Ok(value) if !value.is_empty() => Some(((*name).to_owned(), value)),
-            _ => None,
-        })
-        .collect()
-}
 
 fn forward_frames(app: &AppHandle, client: &KernelClient) {
     let mut frames = client.subscribe();

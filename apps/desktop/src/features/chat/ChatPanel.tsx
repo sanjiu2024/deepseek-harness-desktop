@@ -101,6 +101,10 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
         <div ref={bottom} />
       </section>
 
+      {chat.failure !== null && (
+        <FailureBanner message={chat.failure} />
+      )}
+
       {error !== null && (
         <pre className="border-destructive/40 bg-destructive/10 text-destructive max-h-32 overflow-auto rounded-md border p-2 text-xs whitespace-pre-wrap">
           {error}
@@ -135,6 +139,22 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
           </button>
         </div>
       </footer>
+    </div>
+  )
+}
+
+/**
+ * A failed turn used to render as nothing at all: the events arrived, the reducer
+ * recorded the reason, and the view never looked. A chat that silently swallows a
+ * failed turn is worse than one that errors loudly.
+ */
+function FailureBanner({ message }: { message: string }) {
+  return (
+    <div className="border-destructive/40 bg-destructive/10 rounded-md border p-3">
+      <p className="text-destructive text-sm font-medium">这一轮失败了</p>
+      <p className="text-destructive/90 mt-1 font-mono text-xs whitespace-pre-wrap select-text">
+        {message}
+      </p>
     </div>
   )
 }

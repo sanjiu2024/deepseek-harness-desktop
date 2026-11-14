@@ -16,7 +16,11 @@ runtime/
 
 # ── 用户数据（绝不入库）──────────────────────────────────────
 dsh-home/
+.dev-home/
+probe-home/
 profiles/*/cordis.patch.local.yml
+# Local provider keys, written by hand or by scripts/dev.ps1.
+provider.env
 
 # ── 密钥 ───────────────────────────────────────────────────
 .env

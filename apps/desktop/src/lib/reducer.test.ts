@@ -271,3 +271,18 @@ describe('live stream from the kernel-side bridge', () => {
     expect(state.messages).toHaveLength(0)
   })
 })
+
+describe('turn lifecycle', () => {
+  it('clears the previous failure when a new turn starts', () => {
+    let state = reduceEvent(emptyChat, event('turn/end', { reason: { kind: 'error', error: { message: 'boom' } } }))
+    expect(state.failure).toBe('boom')
+    state = reduceEvent(state, event('turn/start', { turn: 2 }))
+    expect(state.failure).toBeNull()
+  })
+
+  it('reports no failure for a completed turn', () => {
+    const state = reduceEvent(emptyChat, event('turn/end', { reason: { kind: 'completed' } }))
+    expect(state.failure).toBeNull()
+    expect(state.active).toBeNull()
+  })
+})
