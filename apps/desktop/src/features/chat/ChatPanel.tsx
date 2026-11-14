@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { onKernelFrame, promptSession, type KernelFrame } from '@/lib/ipc.ts'
-import { emptyChat, reduceEvent, type ChatState, type Message, type SessionEvent } from '@/lib/reducer.ts'
+import {
+  applyLiveChunk,
+  emptyChat,
+  reduceEvent,
+  type ChatState,
+  type Message,
+  type SessionEvent,
+} from '@/lib/reducer.ts'
 
 /**
  * M1 chat surface: a real turn, streamed into real messages.
@@ -22,6 +29,13 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
     let cancelled = false
 
     void onKernelFrame((frame) => {
+      // The kernel-side bridge republishes live stream chunks under its own
+      // method; they carry no durable sequence, so they fold separately.
+      if (frame.kind === 'notification' && frame.method === LIVE_CHUNK_METHOD) {
+        const chunk = liveChunkOf(frame.params, sessionId)
+        if (chunk !== null) setChat((state) => applyLiveChunk(state, chunk))
+        return
+      }
       const event = toSessionEvent(frame, sessionId)
       if (event === null) return
       if (!KNOWN_KINDS.has(event.type)) {
@@ -47,10 +61,9 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
     bottom.current?.scrollIntoView({ block: 'end' })
   }, [chat.messages])
 
-  const streaming = useMemo(
-    () => chat.messages.at(-1)?.role === 'assistant',
-    [chat.messages],
-  )
+  // With live chunks the last message is the assistant's from the first delta,
+  // so the state has to come from the turn, not from the message list.
+  const streaming = useMemo(() => chat.active !== null, [chat.active])
 
   const send = async () => {
     const text = draft.trim()
@@ -153,6 +166,17 @@ function MessageRow({ message }: { message: Message }) {
       )}
     </li>
   )
+}
+
+/** Method the Rust bridge republishes live stream frames under. */
+const LIVE_CHUNK_METHOD = 'dsh-desktop/live-chunk'
+
+/** Pull the StreamChunk out of a bridge frame, keeping only our session. */
+function liveChunkOf(params: unknown, sessionId: string): unknown {
+  if (params === null || typeof params !== 'object') return null
+  const frame = params as { sessionId?: unknown; kind?: unknown; chunk?: unknown }
+  if (frame.sessionId !== sessionId) return null
+  return frame.kind === 'chunk' ? (frame.chunk ?? null) : null
 }
 
 /** Event kinds the panel draws today; anything else is reported, not guessed at. */

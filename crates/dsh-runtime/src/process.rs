@@ -22,6 +22,12 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::protocol::{self, Incoming, ResponsePayload, RpcError};
 
+/// Prefix the kernel-side live bridge writes to stderr; see `bridge/index.js`.
+pub const LIVE_PREFIX: &str = "\u{1}DSH-LIVE ";
+
+/// Notification method the live bridge frames are republished under.
+pub const LIVE_CHUNK_METHOD: &str = "dsh-desktop/live-chunk";
+
 /// How many inbound frames a slow consumer may fall behind before it starts
 /// dropping them. A dropped batch is reported by the receiver, not silently
 /// ignored.
@@ -220,12 +226,29 @@ impl KernelClient {
             });
         }
 
-        // stderr: diagnostics only, never protocol.
+        // stderr: diagnostics, plus the live stream the bridge republishes.
         {
             let stderr_tail = Arc::clone(&stderr_tail);
+            let events = events.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
+                    // Tagged frames are protocol, not diagnostics: they join the
+                    // same broadcast as stdout frames so the UI has one path.
+                    if let Some(json) = line.strip_prefix(LIVE_PREFIX) {
+                        match serde_json::from_str::<serde_json::Value>(json) {
+                            Ok(params) => {
+                                let _ = events.send(Incoming::Notification {
+                                    method: LIVE_CHUNK_METHOD.to_owned(),
+                                    params,
+                                });
+                            }
+                            Err(error) => {
+                                tracing::warn!(target: "dsh_runtime", %error, "unparseable live frame");
+                            }
+                        }
+                        continue;
+                    }
                     tracing::debug!(target: "dsh_kernel", "{line}");
                     let mut tail = stderr_tail.lock().expect("stderr lock");
                     if tail.len() == STDERR_HISTORY {

@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { emptyChat, reduceEvent, reduceEvents, type ChatState, type SessionEvent } from './reducer.ts'
+import {
+  applyLiveChunk,
+  emptyChat,
+  reduceEvent,
+  reduceEvents,
+  type ChatState,
+  type SessionEvent,
+} from './reducer.ts'
 import capture from './__fixtures__/events-sample.json' with { type: 'json' }
 
 /**
@@ -8,6 +15,7 @@ import capture from './__fixtures__/events-sample.json' with { type: 'json' }
  * the kernel actually sends, not the ones the protocol docs implied.
  */
 const captured: SessionEvent[] = capture.events.map((entry) => entry.event)
+const live = capture.live as Array<{ kind: string; sessionId: string; chunk?: unknown }>
 
 let seq: number
 beforeEach(() => {
@@ -53,9 +61,11 @@ describe('against a captured kernel stream', () => {
     expect(state.route).toEqual({ provider: 'opencode-go', model: 'deepseek-v4.1-flash' })
   })
 
-  it('renders the answer and its reasoning as separate blocks', () => {
+  it('renders the answer text from the durable message', () => {
     const assistant = state.messages.find((message) => message.role === 'assistant')
-    expect(assistant?.parts.map((part) => part.kind)).toEqual(['reasoning', 'text'])
+    // Block order is the kernel's: this capture answered without reasoning, so
+    // the assertion is about the text arriving, not about a fixed block list.
+    expect(assistant?.parts.at(-1)?.kind).toBe('text')
     expect(assistant?.parts.at(-1)?.text).toContain('deepseek-v4.1-flash')
   })
 
@@ -207,5 +217,57 @@ describe('idempotence', () => {
     const state = fold([event('permission/preset', { preset: 'workspace-write' })])
     expect(state.messages).toHaveLength(0)
     expect(state.lastSeq).toBe(1001)
+  })
+})
+
+describe('live stream from the kernel-side bridge', () => {
+  it('captured live frames carry the answer as text deltas', () => {
+    const deltas = live
+      .filter((frame) => frame.kind === 'chunk')
+      .map((frame) => frame.chunk as { type: string; text?: string })
+      .filter((chunk) => chunk.type === 'text-delta')
+      .map((chunk) => chunk.text ?? '')
+
+    expect(deltas.length).toBeGreaterThan(1)
+    expect(deltas.join('')).toContain('deepseek-v4.1-flash')
+  })
+
+  it('streams text incrementally before the durable message lands', () => {
+    // The whole point of the bridge: something readable exists mid-turn.
+    let state = reduceEvents(emptyChat, captured.filter((entry) => entry.type === 'user/message'))
+    for (const frame of live) {
+      if (frame.kind !== 'chunk') continue
+      state = applyLiveChunk(state, frame.chunk)
+    }
+    const assistant = state.messages.find((message) => message.role === 'assistant')
+    expect(assistant).toBeDefined()
+    expect(assistant?.parts.at(-1)?.text).toContain('deepseek-v4.1-flash')
+  })
+
+  it('does not advance the durable sequence', () => {
+    const base = reduceEvents(emptyChat, captured)
+    const after = applyLiveChunk(base, { type: 'text-delta', index: 0, text: 'x' })
+    expect(after.lastSeq).toBe(base.lastSeq)
+  })
+
+  it('appends successive deltas to one message', () => {
+    let state = emptyChat
+    for (const text of ['a', 'b', 'c']) {
+      state = applyLiveChunk(state, { type: 'text-delta', index: 0, text })
+    }
+    expect(state.messages).toHaveLength(1)
+    expect(state.messages[0]?.parts).toEqual([{ kind: 'text', text: 'abc' }])
+  })
+
+  it('keeps reasoning deltas in their own part', () => {
+    let state = emptyChat
+    state = applyLiveChunk(state, { type: 'reasoning-delta', index: 0, text: 'think' })
+    state = applyLiveChunk(state, { type: 'text-delta', index: 1, text: 'answer' })
+    expect(state.messages[0]?.parts.map((part) => part.kind)).toEqual(['reasoning', 'text'])
+  })
+
+  it('ignores chunk kinds that carry no text', () => {
+    const state = applyLiveChunk(emptyChat, { type: 'usage', usage: { inputTokens: 1 } })
+    expect(state.messages).toHaveLength(0)
   })
 })

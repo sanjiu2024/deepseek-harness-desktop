@@ -8,6 +8,8 @@
 # acceptable for a single-user desktop app.
 - id: session-persistence-jsonl
   config:
+    # A patch replaces the row's whole config, so root must be restated.
+    root: !!js dshHomePath('sessions')
     compression: 'none'
 
 # ── 2. Session titles ────────────────────────────────────────────────────
@@ -30,3 +32,13 @@
     providers:
       opencode-go:
         apiKeyEnv: OPENCODE_API_KEY
+
+# ── 5. Live assistant stream ─────────────────────────────────────────────
+# The SDK wire carries durable events only, so a reply arrives whole when the
+# turn ends. This plugin subscribes to the kernel's global
+# `agent/assistant-stream` event and re-publishes each frame on a tagged stderr
+# line, which the desktop client parses into its own notification. Installed by
+# `scripts/install-bridge.mjs`; a kernel-side plugin, not a source change.
+- insert:
+    - id: dsh-desktop-live-bridge
+      name: 'dsh-desktop-live-bridge'

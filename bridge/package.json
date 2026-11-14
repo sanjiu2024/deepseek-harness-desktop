@@ -1,0 +1,9 @@
+{
+  "name": "dsh-desktop-live-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Re-publishes the kernel's assistant stream to the desktop client over a tagged stderr channel.",
+  "main": "index.js",
+  "license": "MIT"
+}

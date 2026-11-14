@@ -14,7 +14,7 @@
  */
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -23,6 +23,8 @@ const entry = join(root, 'kernel', 'node_modules', '@deepseek-ai', 'dsh', 'lib',
 const home = join(root, '.capture-home')
 const fixtureDir = join(root, 'apps', 'desktop', 'src', 'lib', '__fixtures__')
 const captureMs = Number(process.env.CAPTURE_MS ?? 20_000)
+// Tagged line the kernel-side bridge writes to stderr; see bridge/index.js.
+const LIVE_PREFIX = String.fromCharCode(1) + 'DSH-LIVE '
 const sessionId = `capture-${Date.now()}`
 const prompt = process.env.CAPTURE_PROMPT ?? '用一句话说明你是什么模型。'
 
@@ -32,7 +34,12 @@ if (!existsSync(entry)) {
 }
 
 rmSync(home, { recursive: true, force: true })
-mkdirSync(home, { recursive: true })
+mkdirSync(join(home, 'node_modules'), { recursive: true })
+// Same install the app performs: Node resolves the bridge from the kernel home.
+cpSync(join(root, 'bridge'), join(home, 'node_modules', 'dsh-desktop-live-bridge'), {
+  recursive: true,
+  force: true,
+})
 mkdirSync(fixtureDir, { recursive: true })
 
 const patch = join(root, 'profiles', 'sdk', 'cordis.patch.yml')
@@ -44,8 +51,15 @@ const child = spawn(process.execPath, [entry, '--profile', 'sdk', '--patch', pat
 })
 
 const events = []
+const live = []
 const stderrTail = []
+let liveFrames = 0
 createInterface({ input: child.stderr }).on('line', (line) => {
+  if (line.startsWith('DSH-LIVE ')) {
+    liveFrames += 1
+    live.push(JSON.parse(line.slice('DSH-LIVE '.length)))
+    return
+  }
   stderrTail.push(line)
   if (stderrTail.length > 60) stderrTail.shift()
 })
@@ -117,7 +131,7 @@ function finish(code) {
   const file = join(fixtureDir, `events-${stamp}.json`)
   writeFileSync(
     file,
-    `${JSON.stringify({ sessionId, prompt, capturedAt: new Date().toISOString(), events }, null, 2)}\n`,
+    `${JSON.stringify({ sessionId, prompt, capturedAt: new Date().toISOString(), events, live }, null, 2)}\n`,
   )
   console.log(`\n[capture] ${events.length} events -> ${file}`)
   if (events.length === 0) {

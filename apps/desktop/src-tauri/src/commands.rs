@@ -85,6 +85,8 @@ pub async fn kernel_start(app: AppHandle, state: State<'_, AppState>) -> Result<
         ));
     }
     std::fs::create_dir_all(&state.dsh_home).map_err(|error| error.to_string())?;
+    // The live bridge must exist before the kernel resolves the profile patch.
+    state.install_bridge()?;
 
     let client = KernelClient::spawn(KernelConfig {
         node: std::env::var_os("DSH_NODE").map_or_else(|| "node".into(), Into::into),

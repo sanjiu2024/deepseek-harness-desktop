@@ -40,5 +40,7 @@
 pub mod process;
 pub mod protocol;
 
-pub use process::{kernel_entry, ExitStatus, KernelClient, KernelConfig, RuntimeError};
+pub use process::{
+    kernel_entry, ExitStatus, KernelClient, KernelConfig, RuntimeError, LIVE_CHUNK_METHOD, LIVE_PREFIX,
+};
 pub use protocol::{ApprovalOutcome, Incoming, ProtocolError, ResponsePayload, RpcError};

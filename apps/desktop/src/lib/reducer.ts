@@ -176,35 +176,37 @@ function userMessage(event: SessionEvent): Message {
  * get exercised without a network. Until that forwarder exists, an answer
  * arrives whole, in {@link settleAssistantMessage}.
  */
-function foldLiveChunk(state: ChatState, event: SessionEvent): ChatState {
-  const chunk = read(event.data, 'chunk')
+/**
+ * Fold one live stream chunk into the open assistant message.
+ *
+ * Separate from {@link reduceEvent} on purpose: live frames have no durable
+ * sequence, so they must not touch `lastSeq`. Giving them a synthetic seq would
+ * either collide with the next durable event or force the gate to learn an
+ * exception — both worse than a second entry point.
+ */
+export function applyLiveChunk(state: ChatState, chunk: unknown, time = Date.now()): ChatState {
   const kind = asString(read(chunk, 'type'))
+  const synthetic = { seq: state.lastSeq, time, data: chunk } as SessionEvent
 
   switch (kind) {
     case 'text-delta':
-      return appendText(state, event, 'text', asString(read(chunk, 'text')) ?? '')
+      return appendText(state, synthetic, 'text', asString(read(chunk, 'text')) ?? '')
     case 'reasoning-delta':
-      return appendText(state, event, 'reasoning', asString(read(chunk, 'text')) ?? '')
+      return appendText(state, synthetic, 'reasoning', asString(read(chunk, 'text')) ?? '')
     case 'tool-call-delta': {
-      const callId = asString(read(chunk, 'id')) ?? `call-${event.seq}`
+      const callId = asString(read(chunk, 'id')) ?? `call-${state.lastSeq + 1}`
       const name = asString(read(chunk, 'name'))
       const delta = asString(read(chunk, 'argumentsDelta')) ?? ''
-      return patchTools(state, event, (tools) => {
-        const index = tools.findIndex((tool) => tool.callId === callId)
-        if (index === -1) {
+      return patchTools(state, synthetic, (tools) => {
+        const at = tools.findIndex((tool) => tool.callId === callId)
+        if (at === -1) {
           return [
             ...tools,
             { callId, name: name ?? 'tool', arguments: delta, status: 'running', output: null },
           ]
         }
-        return tools.map((tool, at) =>
-          at === index
-            ? {
-                ...tool,
-                name: name ?? tool.name,
-                arguments: tool.arguments + delta,
-              }
-            : tool,
+        return tools.map((tool, index) =>
+          index === at ? { ...tool, name: name ?? tool.name, arguments: tool.arguments + delta } : tool,
         )
       })
     }
@@ -212,6 +214,16 @@ function foldLiveChunk(state: ChatState, event: SessionEvent): ChatState {
       // `block-start`, `block-end`, `usage`, `finish` carry no renderable text.
       return state
   }
+}
+
+/**
+ * `assistant/live-chunk` as a durable-shaped event.
+ *
+ * Kept for the case where the kernel itself publishes the Web-shaped event; the
+ * desktop bridge sends raw `StreamChunk`s through {@link applyLiveChunk}.
+ */
+function foldLiveChunk(state: ChatState, event: SessionEvent): ChatState {
+  return applyLiveChunk(state, read(event.data, 'chunk'), event.time)
 }
 
 /**

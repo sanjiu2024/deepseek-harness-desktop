@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-11-15
+
+Streaming works. The kernel's live assistant stream now reaches the client token by token.
+
+### Added
+
+- `bridge/` — `dsh-desktop-live-bridge`, a **kernel-side plugin** subscribed to the global
+  `agent/assistant-stream` event. It republishes each frame on a tagged stderr line
+  (`\u0001DSH-LIVE <json>`). stderr, not stdout: stdout belongs to the JSON-RPC transport, and a
+  second writer there can interleave half-frames.
+- `scripts/install-bridge.mjs` — copies the plugin to `$DSH_HOME/node_modules`, which is where
+  Node's resolution from `$DSH_HOME/profiles/sdk/` actually finds it. `kernel/node_modules` does
+  not work, and neither does a machine path committed into the profile patch.
+- `AppState::install_bridge` — the app performs the same copy before spawning the kernel.
+- `dsh_runtime::LIVE_PREFIX` / `LIVE_CHUNK_METHOD` — the stderr reader turns tagged lines into
+  `dsh-desktop/live-chunk` notifications on the same broadcast as stdout frames, so the UI keeps
+  one path for everything.
+- `applyLiveChunk` in the reducer — folds a `StreamChunk` without touching `lastSeq`. Live frames
+  have no durable sequence; giving them a synthetic one would either collide with the next durable
+  event or force the gate to learn an exception.
+- Tests: 28 frontend tests (fixture now includes 10 captured live frames) and a Rust end-to-end
+  test that spawns the kernel, prompts it, and asserts real `text-delta` frames arrive.
+
+### Fixed
+
+- `session-persistence-jsonl` config was invalid: a patch replaces a row's whole `config`, so
+  setting `compression` alone dropped the required `root`. The kernel logged a ValidationError and
+  fell back to defaults — the patch had been doing nothing.
+
+### Verified
+
+- `CAPTURE_PROVIDER=opencode-go node scripts/capture-events.mjs` → 19 durable events + **10 live
+  frames**, whose deltas concatenate to the answer text.
+- `cargo test -p dsh-runtime --test kernel_smoke live_bridge` → passes in 15.43s with a real key.
+- `pnpm --filter @dsh-desktop/app test` → 28 passed.
+
 ## [0.3.0] — 2026-11-15
 
 First real model answer. And: the SDK protocol has no token-level streaming.
