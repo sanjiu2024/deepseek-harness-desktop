@@ -132,6 +132,26 @@ pub async fn kernel_initialize(
         .map_err(|error| error.to_string())
 }
 
+/// Call any SDK method.
+///
+/// A generic door beats one command per method: the protocol is small, stable,
+/// and versioned with the kernel pin, so eight typed wrappers would be eight
+/// places to drift. Errors keep the kernel's own code and message.
+#[tauri::command]
+pub async fn kernel_call(
+    state: State<'_, AppState>,
+    method: String,
+    params: serde_json::Value,
+    timeout_ms: Option<u64>,
+) -> Result<serde_json::Value, String> {
+    let client = state.running()?;
+    let timeout = timeout_ms.map(Duration::from_millis);
+    client
+        .call(&method, params, timeout)
+        .await
+        .map_err(|error| error.to_string())
+}
+
 /// Answer a kernel-initiated request, e.g. an approval prompt.
 #[tauri::command]
 pub fn kernel_answer(
@@ -221,6 +241,7 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         kernel_paths,
         kernel_start,
         kernel_initialize,
+        kernel_call,
         kernel_answer,
         kernel_diagnostics,
         kernel_stop,

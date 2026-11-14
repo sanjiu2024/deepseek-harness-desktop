@@ -77,3 +77,20 @@ export function onKernelLagged(handler: (skipped: number) => void): Promise<Unli
 export function onKernelExit(handler: (status: KernelExit) => void): Promise<UnlistenFn> {
   return listen<KernelExit>(KERNEL_EXIT_EVENT, (event) => handler(event.payload))
 }
+
+/** Call any SDK method. Prefer the typed helpers above when one exists. */
+export async function kernelCall<T = unknown>(
+  method: string,
+  params: unknown,
+  timeoutMs?: number,
+): Promise<T> {
+  return invoke<T>('kernel_call', { method, params, timeoutMs: timeoutMs ?? null })
+}
+
+/** Queue one user turn on an SDK session id. */
+export function promptSession(sessionId: string, text: string): Promise<{ messageId: string }> {
+  return kernelCall('session/prompt', {
+    sessionId,
+    contentBlocks: [{ type: 'text', text }],
+  })
+}

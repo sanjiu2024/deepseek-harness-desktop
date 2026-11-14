@@ -28,7 +28,7 @@ const MAX_LOG = 200
  * the real workspace; until then this is the acceptance instrument and it stays
  * honest about what has and has not happened.
  */
-export function BootPanel() {
+export function BootPanel({ onReady }: { onReady: () => void }) {
   const [paths, setPaths] = useState<KernelPaths | null>(null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -88,6 +88,7 @@ export function BootPanel() {
       })
       append('initialize', JSON.stringify(result))
       setPhase('ready')
+      onReady()
     } catch (cause) {
       setError(String(cause))
       setPhase('failed')
