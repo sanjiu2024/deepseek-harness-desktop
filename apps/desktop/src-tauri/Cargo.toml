@@ -16,14 +16,13 @@ tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-store = "2"
-tauri-plugin-updater = "2"
+
 
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tokio.workspace = true
 
-dsh-runtime.workspace = true
-dsh-store.workspace = true
-dsh-native.workspace = true
+dsh-runtime = { path = "../../../crates/dsh-runtime" }
