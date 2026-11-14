@@ -286,3 +286,36 @@ describe('turn lifecycle', () => {
     expect(state.active).toBeNull()
   })
 })
+
+describe('reasoning survives the durable message', () => {
+  it('keeps streamed reasoning when the durable message omits it', () => {
+    let state = emptyChat
+    state = applyLiveChunk(state, { type: 'reasoning-delta', index: 0, text: '先算脚数' })
+    state = applyLiveChunk(state, { type: 'text-delta', index: 1, text: '鸡' })
+    state = reduceEvent(state, event('assistant/message', {
+      message: { role: 'assistant', content: [{ type: 'text', text: '鸡 23 只，兔 12 只' }] },
+    }))
+    expect(state.messages[0]?.parts).toEqual([
+      { kind: 'reasoning', text: '先算脚数' },
+      { kind: 'text', text: '鸡 23 只，兔 12 只' },
+    ])
+  })
+
+  it('prefers the durable reasoning when it carries one', () => {
+    let state = emptyChat
+    state = applyLiveChunk(state, { type: 'reasoning-delta', index: 0, text: 'partial' })
+    state = reduceEvent(state, event('assistant/message', {
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'reasoning', text: 'the full thought' },
+          { type: 'text', text: 'answer' },
+        ],
+      },
+    }))
+    expect(state.messages[0]?.parts).toEqual([
+      { kind: 'reasoning', text: 'the full thought' },
+      { kind: 'text', text: 'answer' },
+    ])
+  })
+})

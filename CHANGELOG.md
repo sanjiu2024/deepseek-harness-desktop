@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-11-15
+
+Reasoning is visible, and answers are rendered as markdown.
+
+### Fixed
+
+- **Streamed reasoning was erased when the answer settled.** The durable
+  `assistant/message` replaced every part with its own content; when a route omits
+  reasoning from that message, a thought the user had already watched stream in vanished
+  at the end of the turn. Parts are now reconciled: the durable message wins for what it
+  carries, and streamed reasoning is preserved when the durable one has none.
+  Measured on a prompt that forces thinking: 35 reasoning deltas in, 375 characters of
+  durable reasoning out — so the data was always there, the render was dropping it.
+- **Markdown was shown as raw text.** `**bold**`, backticks, and lists appeared literally,
+  which makes an answer read like source code. Assistant text now renders through
+  `react-markdown` + `remark-gfm`; raw HTML stays disabled because the text comes from a
+  model.
+
+### Changed
+
+- Reasoning moved out of the message body into a collapsed `思考过程 · N 字` disclosure.
+  A trace you can open is not the same thing as a paragraph of the reply.
+- `MessageRow` split into its own file; the marker list of unrendered kernel events moved
+  from a permanent line under the composer into a collapsed footer entry.
+
+### Verified
+
+- `pnpm --filter @dsh-desktop/app test` → 32 passed (2 new: reasoning survives a durable
+  message that omits it, and durable reasoning wins when present).
+- `pnpm --filter @dsh-desktop/app build` → 468.19 kB JS (143.88 kB gzip) — markdown support
+  costs ~170 kB raw, ~52 kB gzipped.
+
 ## [0.4.1] — 2026-11-15
 
 First run in a real window. Two problems surfaced immediately.

@@ -5,9 +5,9 @@ import {
   emptyChat,
   reduceEvent,
   type ChatState,
-  type Message,
   type SessionEvent,
 } from '@/lib/reducer.ts'
+import { MessageRow } from './MessageRow.tsx'
 
 /**
  * M1 chat surface: a real turn, streamed into real messages.
@@ -127,7 +127,7 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
         />
         <div className="flex items-center justify-between">
           <span className="text-muted-foreground text-xs">
-            {streaming ? '回复中…' : unknownKinds.length > 0 ? `未渲染：${unknownKinds.join(' ')}` : ''}
+            {streaming ? '回复中…' : ''}
           </span>
           <button
             type="button"
@@ -138,6 +138,17 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
             发送
           </button>
         </div>
+
+        {unknownKinds.length > 0 && (
+          // Which kernel events this view does not draw yet. Kept on screen while
+          // the surface is incomplete; M2 replaces it as the cards land.
+          <details className="text-muted-foreground text-[11px]">
+            <summary className="cursor-pointer select-none">
+              未渲染的内核事件 · {unknownKinds.length} 种
+            </summary>
+            <p className="mt-1 font-mono break-all">{unknownKinds.join(' · ')}</p>
+          </details>
+        )}
       </footer>
     </div>
   )
@@ -156,35 +167,6 @@ function FailureBanner({ message }: { message: string }) {
         {message}
       </p>
     </div>
-  )
-}
-
-function MessageRow({ message }: { message: Message }) {
-  const label = message.role === 'user' ? '你' : message.role === 'assistant' ? '助手' : '系统'
-  return (
-    <li className="flex flex-col gap-1">
-      <span className="text-muted-foreground text-xs">{label}</span>
-      <div className="select-text text-sm leading-relaxed whitespace-pre-wrap">
-        {message.parts.map((part, index) => (
-          <p key={index} className={part.kind === 'reasoning' ? 'text-muted-foreground italic' : ''}>
-            {part.text}
-          </p>
-        ))}
-      </div>
-      {message.tools.length > 0 && (
-        <ul className="border-border flex flex-col gap-1 rounded-md border p-2 font-mono text-xs">
-          {message.tools.map((tool) => (
-            <li key={tool.callId} className="flex gap-2">
-              <span className={tool.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}>
-                {tool.status === 'error' ? '✗' : tool.status === 'ok' ? '✓' : '…'}
-              </span>
-              <span className="font-semibold">{tool.name}</span>
-              <span className="text-muted-foreground truncate">{tool.output ?? tool.arguments}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </li>
   )
 }
 

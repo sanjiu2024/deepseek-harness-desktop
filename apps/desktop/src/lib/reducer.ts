@@ -264,8 +264,26 @@ function settleAssistantMessage(state: ChatState, event: SessionEvent): ChatStat
     })
     return { ...state, messages }
   }
-  messages[messages.length - 1] = { ...last, parts, seq: event.seq }
+  // The durable message wins for what it carries, but some routes omit
+  // reasoning from it; keeping the streamed reasoning avoids erasing a
+  // thought the user already watched arrive.
+  messages[messages.length - 1] = { ...last, parts: mergeParts(parts, last.parts), seq: event.seq }
   return { ...state, messages }
+}
+
+/**
+ * Reconcile the durable message with what the stream produced.
+ *
+ * The durable message is authoritative for the content it carries. It is not
+ * always complete, though: some provider routes omit reasoning from it while
+ * the stream delivered those deltas. In that case the streamed reasoning is kept,
+ * because replacing parts wholesale would erase a thought the user already
+ * watched arrive.
+ */
+function mergeParts(durable: MessagePart[], streamed: MessagePart[]): MessagePart[] {
+  if (durable.some((part) => part.kind === 'reasoning')) return durable
+  const reasoning = streamed.filter((part) => part.kind === 'reasoning')
+  return [...reasoning, ...durable]
 }
 
 /** Replace the accumulated deltas with the attempt's own durable text. */
