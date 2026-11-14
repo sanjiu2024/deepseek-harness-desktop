@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Markdown } from '@/components/markdown.tsx'
 import type { Message, MessagePart, ToolCall } from '@/lib/reducer.ts'
 
@@ -9,7 +9,7 @@ import type { Message, MessagePart, ToolCall } from '@/lib/reducer.ts'
  * a collapsible trace you can open, not a paragraph of the reply. Mixing them is
  * how a model's scratchpad ends up looking like its answer.
  */
-export function MessageRow({ message }: { message: Message }) {
+export function MessageRow({ message, live = false }: { message: Message; live?: boolean }) {
   const label = message.role === 'user' ? '你' : message.role === 'assistant' ? '助手' : '系统'
   const reasoning = message.parts.filter((part) => part.kind === 'reasoning')
   const answer = message.parts.filter((part) => part.kind === 'text')
@@ -18,7 +18,7 @@ export function MessageRow({ message }: { message: Message }) {
     <li className="flex flex-col gap-1.5">
       <span className="text-muted-foreground text-xs">{label}</span>
 
-      {reasoning.length > 0 && <ReasoningBlock parts={reasoning} />}
+      {reasoning.length > 0 && <ReasoningBlock parts={reasoning} live={live && answer.length === 0} />}
 
       {answer.length > 0 &&
         (message.role === 'user' ? (
@@ -40,10 +40,18 @@ export function MessageRow({ message }: { message: Message }) {
   )
 }
 
-/** Collapsed by default: the trace is available, not imposed. */
-function ReasoningBlock({ parts }: { parts: MessagePart[] }) {
-  const [open, setOpen] = useState(false)
+/**
+ * The trace opens itself while the model is thinking and closes once the answer
+ * starts — a collapsed disclosure on a live turn looks exactly like no thinking
+ * at all, which is how this was reported as a bug.
+ */
+function ReasoningBlock({ parts, live }: { parts: MessagePart[]; live: boolean }) {
+  const [open, setOpen] = useState(live)
   const text = parts.map((part) => part.text).join('')
+
+  useEffect(() => {
+    if (live) setOpen(true)
+  }, [live])
 
   return (
     <details
@@ -52,7 +60,7 @@ function ReasoningBlock({ parts }: { parts: MessagePart[] }) {
       className="border-border/70 rounded-md border"
     >
       <summary className="text-muted-foreground cursor-pointer px-2 py-1 text-xs select-none">
-        思考过程 · {text.length} 字{open ? '' : '（点击展开）'}
+        {live ? '思考中…' : '思考过程'} · {text.length} 字{open ? '' : '（点击展开）'}
       </summary>
       <div className="text-muted-foreground max-h-72 overflow-y-auto px-3 pt-1 pb-2 text-xs leading-relaxed whitespace-pre-wrap select-text">
         {text}

@@ -94,8 +94,12 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
           {chat.messages.length === 0 && (
             <li className="text-muted-foreground text-sm">发一句话试试。</li>
           )}
-          {chat.messages.map((message) => (
-            <MessageRow key={`${message.id}-${message.seq}`} message={message} />
+          {chat.messages.map((message, index) => (
+            <MessageRow
+              key={`${message.id}-${message.seq}`}
+              message={message}
+              live={streaming && index === chat.messages.length - 1}
+            />
           ))}
         </ol>
         <div ref={bottom} />
