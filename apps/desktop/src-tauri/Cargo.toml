@@ -16,6 +16,9 @@ tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-store = "2"
+# A second launch must focus the running window, not fight it for the WebView2
+# user-data directory — that race surfaces as HRESULT(0x800700AA) "resource in use".
+tauri-plugin-single-instance = "2"
 
 
 serde.workspace = true

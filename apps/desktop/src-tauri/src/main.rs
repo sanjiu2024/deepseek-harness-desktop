@@ -18,16 +18,35 @@ fn main() -> ExitCode {
         )
         .init();
 
+    // Create our own data directory before the window exists, so nothing in the
+    // startup path depends on a directory appearing later.
+    let data_dir = state::app_data_dir();
+    if let Err(error) = std::fs::create_dir_all(&data_dir) {
+        eprintln!("cannot create {}: {error}", data_dir.display());
+        return ExitCode::FAILURE;
+    }
+
     let result = tauri::Builder::default()
+        // Registered first: the single-instance check must run before anything
+        // that touches the WebView2 profile. Two processes on one profile is the
+        // other way this window fails to appear.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_notification::init())
-        .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&data_dir)?;
-            app.manage(AppState::resolve(data_dir));
-            Ok(())
+        .setup({
+            let data_dir = data_dir.clone();
+            move |app| {
+                app.manage(AppState::resolve(data_dir));
+                Ok(())
+            }
         })
         .invoke_handler(commands::handlers())
         .build(tauri::generate_context!());

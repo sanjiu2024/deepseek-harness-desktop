@@ -9,6 +9,29 @@ use std::sync::{Arc, Mutex};
 
 use dsh_runtime::KernelClient;
 
+/// The app data directory for this build: `%APPDATA%\<identifier>`.
+///
+/// Computed without an `AppHandle` so it can be created before the window is
+/// built. This is hygiene, not a workaround: the directory is ours, and a window
+/// that depends on a directory appearing later is a window with a hidden order
+/// dependency.
+pub fn app_data_dir() -> PathBuf {
+    let roaming = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    roaming.join(identifier())
+}
+
+/// The bundle identifier, parsed from the configuration this binary was built with.
+/// A second copy would silently stop matching the moment the app is renamed.
+fn identifier() -> String {
+    const CONFIG: &str = include_str!("../tauri.conf.json");
+    serde_json::from_str::<serde_json::Value>(CONFIG)
+        .ok()
+        .and_then(|config| config.get("identifier").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .unwrap_or_else(|| "com.dsh.desktop".to_owned())
+}
+
 pub struct AppState {
     /// Private kernel home. Never `~/.dsh` — that belongs to the user's CLI.
     pub dsh_home: PathBuf,

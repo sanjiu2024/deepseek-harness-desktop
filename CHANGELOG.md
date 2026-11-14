@@ -4,6 +4,43 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] — 2026-11-15
+
+Added a tool that names the culprit, because the error text never does.
+
+### Added
+
+- `scripts/handles.mjs` — asks Windows' **Restart Manager** which process holds a path, and
+  optionally kills it. No Sysinternals download, no administrator rights.
+  `node scripts/handles.mjs <path> [--kill] [--only name]`.
+- `docs/句柄占用.md` — the three misleading error shapes ("access denied", `0x800700AA`,
+  "file in use") that all mean one thing, and the order to handle them in.
+
+### Found
+
+- The exe that would not start was held by **`tailscale-ipn`** (the Tailscale GUI client), not
+  by a build problem: `node scripts/handles.mjs` named it in one call, after `Get-Process`,
+  `icacls`, an exclusive-open sweep and Restart Manager against the *directory* had all come up
+  empty.
+- **Correction to 0.6.1's diagnosis.** I attributed the WebView2 `E_UNEXPECTED` to a missing
+  `%APPDATA%\<identifier>` parent directory. That was wrong: with the directory deleted, a copy
+  of the same binary starts fine. Creating the directory before the window is kept as hygiene,
+  but the comments no longer claim a cause that does not exist.
+
+### Changed
+
+- `tauri-plugin-single-instance` focuses the running window instead of racing it for the
+  WebView2 profile.
+- The app deliberately does **not** kill other processes at startup: it cannot know whether the
+  holder is the user's VPN, backup or debugger. Killing stays a human decision in `scripts/`.
+
+### Verified
+
+- `node scripts/handles.mjs` identified `tailscale-ipn` as the holder in one call.
+- A copy of the binary under `%TEMP%` starts and stays up on a machine where the in-place exe
+  cannot be launched.
+- `pnpm --filter @dsh-desktop/app test` → 43 passed; `cargo clippy` with `-D warnings` clean.
+
 ## [0.6.1] — 2026-11-15
 
 ### Fixed
