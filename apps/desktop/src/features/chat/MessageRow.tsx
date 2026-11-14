@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Markdown } from '@/components/markdown.tsx'
-import type { Message, MessagePart, ToolCall } from '@/lib/reducer.ts'
+import type { Message, MessagePart } from '@/lib/reducer.ts'
+import { ToolCard } from './ToolCard.tsx'
 
 /**
  * One conversation turn.
@@ -35,7 +36,13 @@ export function MessageRow({ message, live = false }: { message: Message; live?:
           </div>
         ))}
 
-      {message.tools.length > 0 && <ToolList tools={message.tools} />}
+      {message.tools.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          {message.tools.map((tool) => (
+            <ToolCard key={tool.callId} tool={tool} />
+          ))}
+        </div>
+      )}
     </li>
   )
 }
@@ -74,21 +81,5 @@ function ReasoningBlock({ parts, live }: { parts: MessagePart[]; live: boolean }
         {text}
       </div>
     </details>
-  )
-}
-
-function ToolList({ tools }: { tools: ToolCall[] }) {
-  return (
-    <ul className="border-border flex flex-col gap-1 rounded-md border p-2 font-mono text-xs">
-      {tools.map((tool) => (
-        <li key={tool.callId} className="flex gap-2">
-          <span className={tool.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}>
-            {tool.status === 'error' ? '✗' : tool.status === 'ok' ? '✓' : '…'}
-          </span>
-          <span className="font-semibold">{tool.name}</span>
-          <span className="text-muted-foreground truncate">{tool.output ?? tool.arguments}</span>
-        </li>
-      ))}
-    </ul>
   )
 }

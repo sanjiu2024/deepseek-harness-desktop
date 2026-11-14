@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { onKernelFrame, promptSession, type KernelFrame } from '@/lib/ipc.ts'
+import { ipc, onKernelFrame, promptSession, type KernelFrame } from '@/lib/ipc.ts'
+
+const ipcAnswer = (id: number, result: unknown) => ipc.kernelAnswer(id, result)
 import {
   applyLiveChunk,
   emptyChat,
@@ -7,6 +9,14 @@ import {
   type ChatState,
   type SessionEvent,
 } from '@/lib/reducer.ts'
+import {
+  approvalResult,
+  cancelledQuestion,
+  parseInteraction,
+  questionResult,
+  type PendingInteraction,
+} from '@/lib/interaction.ts'
+import { InteractionHost } from './InteractionHost.tsx'
 import { MessageRow } from './MessageRow.tsx'
 
 /**
@@ -22,6 +32,8 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [unknownKinds, setUnknownKinds] = useState<string[]>([])
+  // Blocking requests are a queue: the kernel can ask again while one is open.
+  const [interactions, setInteractions] = useState<PendingInteraction[]>([])
   const bottom = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -29,6 +41,19 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
     let cancelled = false
 
     void onKernelFrame((frame) => {
+      // A blocking request is not an event: ignoring it hangs the turn with no
+      // error anywhere, so it is matched before anything else.
+      if (frame.kind === 'request') {
+        const interaction = parseInteraction(frame.method, frame.id, frame.params)
+        if (interaction !== null) {
+          setInteractions((previous) => [...previous, interaction])
+        } else {
+          setUnknownKinds((previous) =>
+            previous.includes(frame.method) ? previous : [...previous, frame.method],
+          )
+        }
+        return
+      }
       // The kernel-side bridge republishes live stream chunks under its own
       // method; they carry no durable sequence, so they fold separately.
       if (frame.kind === 'notification' && frame.method === LIVE_CHUNK_METHOD) {
@@ -64,6 +89,21 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
   // With live chunks the last message is the assistant's from the first delta,
   // so the state has to come from the turn, not from the message list.
   const streaming = useMemo(() => chat.active !== null, [chat.active])
+
+  /**
+   * Answer the request in front and drop it from the queue.
+   *
+   * The kernel blocks on this reply: if it fails, the request stays queued so the
+   * user can try again instead of the turn silently dying.
+   */
+  const answer = async (interaction: PendingInteraction, result: unknown) => {
+    try {
+      await ipcAnswer(interaction.id, result)
+      setInteractions((previous) => previous.filter((entry) => entry.id !== interaction.id))
+    } catch (cause) {
+      setError(`应答失败：${String(cause)}`)
+    }
+  }
 
   const send = async () => {
     const text = draft.trim()
@@ -113,6 +153,15 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
         <pre className="border-destructive/40 bg-destructive/10 text-destructive max-h-32 overflow-auto rounded-md border p-2 text-xs whitespace-pre-wrap">
           {error}
         </pre>
+      )}
+
+      {interactions[0] !== undefined && (
+        <InteractionHost
+          interaction={interactions[0]}
+          onAnswer={(outcome) => void answer(interactions[0]!, approvalResult(outcome))}
+          onQuestion={(answers) => void answer(interactions[0]!, questionResult(answers))}
+          onCancelQuestion={() => void answer(interactions[0]!, cancelledQuestion())}
+        />
       )}
 
       <footer className="flex flex-col gap-2">

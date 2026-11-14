@@ -366,21 +366,38 @@ function replaceLastAssistant(state: ChatState, event: SessionEvent, text: strin
 }
 
 function appendTool(state: ChatState, event: SessionEvent): ChatState {
+  const raw = read(event.data, 'arguments')
   const call: ToolCall = {
     callId: asString(read(event.data, 'callId')) ?? `call-${event.seq}`,
     name: asString(read(event.data, 'name')) ?? 'tool',
-    arguments: JSON.stringify(read(event.data, 'arguments') ?? null),
+    // `arguments` arrives already serialised as a JSON string; re-encoding a
+    // string would double-quote the whole payload.
+    arguments: typeof raw === 'string' ? raw : JSON.stringify(raw ?? null),
     status: 'running',
     output: null,
   }
   return patchTools(state, event, (tools) => [...tools, call])
 }
 
+/**
+ * `tool/result` carries the outcome inside a tool message, not in flat fields:
+ * `{ message: { toolCallId, content: [{ type: 'text', text }], isError? } }`.
+ */
 function settleTool(state: ChatState, event: SessionEvent): ChatState {
-  const callId = asString(read(event.data, 'callId'))
-  const output =
-    asString(read(event.data, 'output')) ?? JSON.stringify(read(event.data, 'result') ?? null)
-  const failed = read(event.data, 'isError') === true
+  const message = read(event.data, 'message')
+  const callId =
+    asString(read(event.data, 'toolCallId')) ??
+    asString(read(message, 'toolCallId')) ??
+    asString(read(read(message, 'source'), 'callId'))
+
+  const content = read(message, 'content')
+  const output = Array.isArray(content)
+    ? content
+        .map((block) => asString(read(block, 'text')) ?? '')
+        .join('')
+    : asString(content)
+
+  const failed = read(message, 'isError') === true
 
   return {
     ...state,
@@ -388,7 +405,7 @@ function settleTool(state: ChatState, event: SessionEvent): ChatState {
       ...message,
       tools: message.tools.map((tool) =>
         tool.callId === callId || (callId === null && tool.status === 'running')
-          ? { ...tool, status: failed ? 'error' : 'ok', output }
+          ? { ...tool, status: failed ? 'error' : 'ok', output: output ?? '' }
           : tool,
       ),
     })),

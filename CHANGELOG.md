@@ -4,6 +4,65 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-11-15
+
+M2: approvals, questions, and tool cards — with the shapes captured from a real run.
+
+### Added
+
+- `src/lib/interaction.ts` — the two blocking kernel requests as first-class values:
+  `approval/request` and `user-question/ask`. They arrive as JSON-RPC **requests**, not
+  notifications; a client that only listens for events hangs the turn with no error anywhere.
+  10 tests.
+- `InteractionHost` — approval dialog (allow-once / reject) and a question dialog with
+  single/multi select plus free text. One decision on screen at a time, the rest queue: two
+  stacked modals is how the wrong button gets clicked.
+- `ToolCard` — collapsed tool invocation: name, status, one-line summary, command and output
+  on expand.
+
+### Corrected against a capture
+
+The tool shapes were guessed wrong twice. A real run (`pwsh`, plus an escalation to
+`danger-full-access`) produced:
+
+| Guessed | Actually |
+| --- | --- |
+| `tool/call.arguments` is an object | a **JSON string**; re-encoding doubled the quoting |
+| `tool/result` carries flat `output` / `callId` / `isError` | `{ message: { toolCallId, content: [{type:'text',text}], isError } }` |
+
+Two synthetic tests that encoded the wrong guess were deleted rather than patched — they
+asserted a shape the kernel does not send.
+
+### Found — when approval actually happens
+
+A plain `pwsh ls` inside `workspace-write` runs with **no prompt**. The prompt appears only on
+escalation: the same write outside the workspace was first denied by the sandbox, then retried
+with `sandbox_permissions: danger-full-access` + `justification`, and only then did the kernel
+ask. `approval/request` params: `{ sessionId, toolName, callId, reason }`.
+
+### Verified
+
+- `pnpm --filter @dsh-desktop/app test` → 43 passed (2 files).
+- `pnpm --filter @dsh-desktop/app build` → 475.39 kB JS (145.87 kB gzip).
+- `cargo clippy --workspace --all-targets -- -D warnings` → clean.
+
+## [0.5.2] — 2026-11-15
+
+### Fixed
+
+- The thinking trace stayed open after the answer finished. 0.5.1 opened it while streaming but
+  never closed it. It now closes when text starts, unless the user toggled it — a manual
+  decision outranks the streaming state.
+
+## [0.5.1] — 2026-11-15
+
+### Fixed
+
+- Reasoning is expanded while the model is thinking. A collapsed disclosure on a live turn looks
+  exactly like no thinking at all, which is how the missing trace got reported as a bug. Measured
+  first: `你好` produces 0 reasoning deltas even at `reasoningEffort: high`; a word problem
+  produces 15. The greeting case was never a client bug — only the invisible presentation was.
+
 ## [0.5.0] — 2026-11-15
 
 Reasoning is visible, and answers are rendered as markdown.

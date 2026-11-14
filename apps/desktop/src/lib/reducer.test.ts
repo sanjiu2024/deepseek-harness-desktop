@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   applyLiveChunk,
@@ -179,27 +180,6 @@ describe('durable attempt records', () => {
   })
 })
 
-describe('tool events (unverified shape)', () => {
-  it('pairs a result with its call by callId', () => {
-    const state = fold([
-      event('user/message', { id: 'u1', content: 'q' }),
-      event('tool/call', { callId: 'c1', name: 'bash', arguments: { command: 'ls' } }),
-      event('tool/call', { callId: 'c2', name: 'read', arguments: { path: 'a' } }),
-      event('tool/result', { callId: 'c1', output: 'file.txt' }),
-    ])
-    const tools = state.messages[1]?.tools ?? []
-    expect(tools[0]).toMatchObject({ callId: 'c1', status: 'ok', output: 'file.txt' })
-    expect(tools[1]).toMatchObject({ callId: 'c2', status: 'running', output: null })
-  })
-
-  it('marks a failed result as an error', () => {
-    const state = fold([
-      event('tool/call', { callId: 'c1', name: 'bash' }),
-      event('tool/result', { callId: 'c1', isError: true, output: 'exit 1' }),
-    ])
-    expect(state.messages[0]?.tools[0]).toMatchObject({ status: 'error', output: 'exit 1' })
-  })
-})
 
 describe('idempotence', () => {
   it('drops an event at or below the last folded sequence', () => {
@@ -317,5 +297,35 @@ describe('reasoning survives the durable message', () => {
       { kind: 'reasoning', text: 'the full thought' },
       { kind: 'text', text: 'answer' },
     ])
+  })
+})
+
+describe('tool events from a captured run', () => {
+  const tools = JSON.parse(
+    readFileSync(new URL('./__fixtures__/tools-sample.json', import.meta.url), 'utf8'),
+  ) as SessionEvent[]
+
+  it('keeps the kernel arguments string intact instead of re-encoding it', () => {
+    const state = fold([event('user/message', { id: 'u', content: 'q' })])
+    const after = tools.reduce(reduceEvent, state)
+    const first = after.messages[1]?.tools[0]
+    const raw = tools[0]?.data as { arguments?: unknown }
+    expect(first?.arguments).toBe(raw.arguments)
+    expect(JSON.parse(first!.arguments)).toHaveProperty('command')
+  })
+
+  it('reads the outcome out of the tool message rather than flat fields', () => {
+    const state = tools.reduce(reduceEvent, fold([event('user/message', { id: 'u', content: 'q' })]))
+    const first = state.messages[1]?.tools[0]
+    expect(first?.status).toBe('ok')
+    expect(first?.output).toContain('dsh-outside-test')
+  })
+
+  it('settles each result against its own call', () => {
+    const state = tools.reduce(reduceEvent, fold([event('user/message', { id: 'u', content: 'q' })]))
+    const calls = state.messages[1]?.tools ?? []
+    expect(calls).toHaveLength(2)
+    expect(new Set(calls.map((call) => call.callId)).size).toBe(2)
+    expect(calls.every((call) => call.status === 'ok')).toBe(true)
   })
 })

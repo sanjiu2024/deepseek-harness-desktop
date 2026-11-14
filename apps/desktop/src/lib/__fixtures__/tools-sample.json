@@ -1,0 +1,74 @@
+[
+  {
+    "type": "tool/call",
+    "data": {
+      "turn": 1,
+      "step": 1,
+      "callId": "call_dde9e9f66a8f4bb780382e52",
+      "name": "pwsh",
+      "arguments": "{\"command\":\"Set-Content -Path 'D:\\\\dsh-outside-test.txt' -Value 'hello from dsh outside test' -Encoding utf8; Get-Content 'D:\\\\dsh-outside-test.txt'\",\"description\":\"Write a line to a file outside the workspace\"}"
+    }
+  },
+  {
+    "type": "tool/result",
+    "data": {
+      "turn": 1,
+      "step": 1,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "call_dde9e9f66a8f4bb780382e52"
+        },
+        "toolCallId": "call_dde9e9f66a8f4bb780382e52",
+        "content": [
+          {
+            "type": "text",
+            "text": "[stderr]\nSet-Content : 对路径“D:\\dsh-outside-test.txt”的访问被拒绝。\r\n所在位置 行:1 字符: 129\r\n+ ... ew($false); Set-Content -Path 'D:\\dsh-outside-test.txt' -Value 'hello ...\r\n+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : PermissionDenied: (D:\\dsh-outside-test.txt:String) [Set-Content], UnauthorizedAccessExce \r\n   ption\r\n    + FullyQualifiedErrorId : GetContentWriterUnauthorizedAccessError,Microsoft.PowerShell.Commands.SetContentCommand\r\n \r\nGet-Content : 找不到路径“D:\\dsh-outside-test.txt”，因为该路径不存在。\r\n所在位置 行:1 字符: 226\r\n+ ... h outside test' -Encoding utf8; Get-Content 'D:\\dsh-outside-test.txt'\r\n+                                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : ObjectNotFound: (D:\\dsh-outside-test.txt:String) [Get-Content], ItemNotFoundException\r\n    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetContentCommand\r\n \r\n[exit code: 1]"
+          }
+        ],
+        "isError": false,
+        "id": "dd42b1b3-a95a-4036-ad9e-6321bffe4658"
+      },
+      "meta": {
+        "cwd": "D:\\deepseek harness desktop"
+      }
+    }
+  },
+  {
+    "type": "tool/call",
+    "data": {
+      "turn": 1,
+      "step": 2,
+      "callId": "call_ba14c2ee67904d1d8a49542b",
+      "name": "pwsh",
+      "arguments": "{\"command\":\"Set-Content -Path 'D:\\\\dsh-outside-test.txt' -Value 'hello from dsh outside test' -Encoding utf8; Get-Content 'D:\\\\dsh-outside-test.txt'\",\"description\":\"Retry writing outside the workspace with full access\",\"sandbox_permissions\":\"danger-full-access\",\"justification\":\"你明确要求往仓库外的 D:\\\\dsh-outside-test.txt 写一行字，该路径在会话工作区之外，需要放宽文件沙箱才能写入。\"}"
+    }
+  },
+  {
+    "type": "tool/result",
+    "data": {
+      "turn": 1,
+      "step": 2,
+      "message": {
+        "role": "tool",
+        "source": {
+          "kind": "tool",
+          "callId": "call_ba14c2ee67904d1d8a49542b"
+        },
+        "toolCallId": "call_ba14c2ee67904d1d8a49542b",
+        "content": [
+          {
+            "type": "text",
+            "text": "hello from dsh outside test\r\n"
+          }
+        ],
+        "isError": false,
+        "id": "fb32e2b6-9873-48ea-b00b-bb649ed02366"
+      },
+      "meta": {
+        "cwd": "D:\\deepseek harness desktop"
+      }
+    }
+  }
+]
