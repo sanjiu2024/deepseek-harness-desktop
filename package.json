@@ -1,6 +1,6 @@
 {
   "name": "deepseek-harness-desktop",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "type": "module",
   "description": "A Tauri 2 desktop client for the DeepSeek Harness agent kernel.",
@@ -14,11 +14,12 @@
     "kernel:fetch": "node scripts/fetch-kernel.mjs",
     "kernel:smoke": "node scripts/smoke-m0.mjs",
     "icons": "node scripts/gen-icons.mjs",
-    "dev": "pnpm --filter @dsh-desktop/app dev",
+    "dev": "node scripts/dev.mjs",
     "build": "pnpm --filter @dsh-desktop/app build",
     "tauri": "pnpm --filter @dsh-desktop/app tauri",
     "check": "pnpm --filter @dsh-desktop/app check && cargo check --workspace",
     "lint": "pnpm --filter @dsh-desktop/app lint",
-    "bridge:install": "node scripts/install-bridge.mjs"
+    "bridge:install": "node scripts/install-bridge.mjs",
+    "dev:build": "node scripts/dev.mjs build"
   }
 }

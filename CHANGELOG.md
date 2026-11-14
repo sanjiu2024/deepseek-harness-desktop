@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] — 2026-11-15
+
+### Fixed
+
+- **`scripts/dev.ps1` could not run at all.** PowerShell's default execution policy rejects an
+  unsigned `.ps1`, so the launcher the previous release added died on
+  `UnauthorizedAccess` before doing anything — and "run it with `-ExecutionPolicy Bypass`" is
+  not something a project should ask of its users. Replaced by `scripts/dev.mjs`: Node is
+  already required, and no execution policy applies to it. Same job — drop the DeepSeek
+  Harness shim directory from PATH for this process, set the three `DSH_DESKTOP_*` variables,
+  read the key from `provider.env` — plus `--check` to print the resolved environment without
+  launching anything.
+- `docs/工程.md` carried a stray backspace character inside the shim path.
+
 ## [0.6.0] — 2026-11-15
 
 M2: approvals, questions, and tool cards — with the shapes captured from a real run.
