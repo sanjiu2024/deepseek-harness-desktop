@@ -4,6 +4,45 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] — 2026-11-15
+
+The last untested hop has a test, and the surface got the work it was owed.
+
+### Added — the click is covered
+
+- `ChatPanel.test.tsx` renders the real component against a mocked Tauri API and asserts what
+  a finger does: an `approval/request` frame opens the dialog, **允许这一次** invokes
+  `kernel_answer` with the kernel's **string** id and `{ outcome: 'allowed-once' }`, **拒绝**
+  sends `rejected`, the dialog closes after answering, and a blocked call reads
+  `等待你批准` instead of `执行中`.
+- Two vitest projects: `logic` (node) for the reducer and protocol tests, `ui` (jsdom) for
+  components. A single environment would charge jsdom's cost to every test in the repo.
+
+### Changed — the surface
+
+- **Layout.** Header shows the route the kernel reported (`provider / model`) rather than a
+  session id nobody reads. Messages sit in a scrollable body; the composer is a bordered field
+  with the send action inside it, so the input reads as one control instead of a box next to a
+  button.
+- **Blocks render in arrival order**, and a reasoning part that resumes after a tool call is its
+  own block — thinking next to the call it preceded, not a wall of thought on top.
+- **Tool cards** are collapsible with an animated height, carry a status that means something
+  (pulsing while running, `✓`/`✗`, amber pulse while waiting for approval), and hide the command
+  until opened — `{"command":"ls"}` is noise next to `ls`.
+- **Reasoning** is a real disclosure: rotating chevron, animated open/close, a breathing dot and
+  `思考中…` while it streams, and a character count.
+- **Dialogs** fade their backdrop and pop their card in; destructive and primary buttons have
+  distinct weight.
+- **Streaming** shows a blinking caret after the last arriving block.
+- Scrollbars, selection colour and focus rings are styled; the launch screen got a lit card
+  instead of a blank rectangle.
+
+### Verified
+
+- `pnpm --filter @dsh-desktop/app test` → 53 passed (4 new UI tests).
+- `pnpm --filter @dsh-desktop/app build` → 479.74 kB JS / 25.81 kB CSS.
+- `cargo clippy -D warnings` clean; runtime suite unchanged.
+
 ## [0.9.2] — 2026-11-15
 
 The approval round trip is now proven without a model, a sandbox, or a click.

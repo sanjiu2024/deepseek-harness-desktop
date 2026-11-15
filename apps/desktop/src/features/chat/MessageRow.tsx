@@ -6,9 +6,10 @@ import { ToolCard } from './ToolCard.tsx'
 /**
  * One conversation turn.
  *
- * Reasoning and answer are different things and are shown as such: a thought is
- * a collapsible trace you can open, not a paragraph of the reply. Mixing them is
- * how a model's scratchpad ends up looking like its answer.
+ * Reasoning and answer are different things and are shown as such: a thought is a
+ * collapsible trace you can open, not a paragraph of the reply. Blocks render in
+ * the order they arrived, so a turn that thinks, calls a tool, then thinks again
+ * reads the way it happened.
  */
 export function MessageRow({
   message,
@@ -21,25 +22,26 @@ export function MessageRow({
   awaitingApproval?: ReadonlySet<string>
 }) {
   const label = message.role === 'user' ? '你' : message.role === 'assistant' ? '助手' : '系统'
-  // Arrival order, not type order.
-  //
-  // Grouping all reasoning into one block and all tool calls after it read as a
-  // single wall of thought followed by unrelated cards; the kernel actually
-  // interleaves think → call → think. Sorting by the sequence each block arrived
-  // at restores what happened.
-  const ordered = [
-    ...message.parts.map((part) => ({ kind: 'part' as const, seq: part.seq, part })),
-    ...message.tools.map((tool) => ({ kind: 'tool' as const, seq: tool.seq, tool })),
-  ]
-    .sort((left, right) => (left.seq === right.seq ? (left.kind === 'part' ? -1 : 1) : left.seq - right.seq))
-    .map((entry) => entry)
-
   const reasoning = message.parts.filter((part) => part.kind === 'reasoning')
   const hasAnswer = message.parts.some((part) => part.kind === 'text' && part.text !== '')
 
+  const ordered = [
+    ...message.parts.map((part) => ({ kind: 'part' as const, seq: part.seq, part })),
+    ...message.tools.map((tool) => ({ kind: 'tool' as const, seq: tool.seq, tool })),
+  ].sort((left, right) => {
+    if (left.seq === right.seq) return left.kind === 'part' ? -1 : 1
+    return left.seq - right.seq
+  })
+
+  // The caret belongs to whatever text is still arriving, which is only ever the
+  // last block of a live turn.
+  const streamingIndex = live ? ordered.length - 1 : -1
+
   return (
-    <li className="flex flex-col gap-1.5">
-      <span className="text-muted-foreground text-xs">{label}</span>
+    <li className="animate-fade-up flex flex-col gap-2">
+      <span className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+        {label}
+      </span>
 
       {reasoning.length > 0 && <ReasoningBlock parts={reasoning} live={live && !hasAnswer} />}
 
@@ -51,11 +53,16 @@ export function MessageRow({
             awaiting={awaitingApproval.has(entry.tool.callId)}
           />
         ) : entry.part.kind === 'reasoning' ? null : message.role === 'user' ? (
-          <div key={index} className="text-sm leading-relaxed whitespace-pre-wrap select-text">
+          <div
+            key={index}
+            className="bg-secondary/50 rounded-lg px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap select-text"
+          >
             {entry.part.text}
           </div>
         ) : (
-          <Markdown key={index} text={entry.part.text} />
+          <div key={index} className={index === streamingIndex ? 'streaming-caret' : undefined}>
+            <Markdown text={entry.part.text} />
+          </div>
         ),
       )}
     </li>
@@ -65,12 +72,10 @@ export function MessageRow({
 /**
  * The trace opens itself while the model is thinking and closes once the answer
  * starts — a collapsed disclosure on a live turn looks exactly like no thinking
- * at all, which is how this was reported as a bug.
+ * at all. A manual toggle then outranks the streaming state.
  */
 function ReasoningBlock({ parts, live }: { parts: MessagePart[]; live: boolean }) {
   const [open, setOpen] = useState(live)
-  // A manual toggle is an instruction, not a default: once the user has opened
-  // or closed this trace, the streaming state stops moving it.
   const touched = useRef(false)
   const text = parts.map((part) => part.text).join('')
 
@@ -80,21 +85,46 @@ function ReasoningBlock({ parts, live }: { parts: MessagePart[]; live: boolean }
   }, [live])
 
   return (
-    <details
-      open={open}
-      onToggle={(event) => {
-        const element = event.currentTarget as HTMLDetailsElement
-        if (element.open !== open) touched.current = true
-        setOpen(element.open)
-      }}
-      className="border-border/70 rounded-md border"
-    >
-      <summary className="text-muted-foreground cursor-pointer px-2 py-1 text-xs select-none">
-        {live ? '思考中…' : '思考过程'} · {text.length} 字{open ? '' : '（点击展开）'}
-      </summary>
-      <div className="text-muted-foreground max-h-72 overflow-y-auto px-3 pt-1 pb-2 text-xs leading-relaxed whitespace-pre-wrap select-text">
-        {text}
+    <div className="border-border/60 bg-card/40 overflow-hidden rounded-lg border">
+      <button
+        type="button"
+        onClick={() => {
+          touched.current = true
+          setOpen((previous) => !previous)
+        }}
+        className="text-muted-foreground hover:text-foreground flex w-full items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors select-none"
+        aria-expanded={open}
+      >
+        <svg
+          viewBox="0 0 12 12"
+          aria-hidden="true"
+          className={`size-2.5 transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+        >
+          <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+        {live ? (
+          <span className="flex items-center gap-1.5">
+            <span className="animate-breathe inline-block size-1.5 rounded-full bg-current" />
+            思考中…
+          </span>
+        ) : (
+          <span>思考过程</span>
+        )}
+        <span className="opacity-60">· {text.length} 字</span>
+      </button>
+
+      {/* grid-rows 0fr→1fr animates height without measuring it. */}
+      <div
+        className={`grid transition-[grid-template-rows] duration-250 ease-out ${
+          open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div className="text-muted-foreground max-h-72 overflow-y-auto px-3 pt-0.5 pb-2.5 text-xs leading-relaxed whitespace-pre-wrap select-text">
+            {text}
+          </div>
+        </div>
       </div>
-    </details>
+    </div>
   )
 }

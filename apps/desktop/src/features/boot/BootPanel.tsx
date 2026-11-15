@@ -11,7 +11,7 @@ import {
 
 type Phase = 'idle' | 'starting' | 'handshaking' | 'ready' | 'failed'
 
-/** One line in the frame log. Kept small on purpose: this is a probe, not a UI. */
+/** One line in the frame log. */
 interface LogLine {
   id: number
   label: string
@@ -19,14 +19,16 @@ interface LogLine {
 }
 
 const MAX_LOG = 200
+const PROVIDER = 'opencode-go'
+const MODEL = 'deepseek-v4.1-flash'
 
 /**
- * M0 probe panel.
+ * Launch screen.
  *
- * Proves the whole path in one screen: React → invoke → Rust → kernel stdio →
- * broadcast → Tauri event → React. Everything below it in M1 replaces this with
- * the real workspace; until then this is the acceptance instrument and it stays
- * honest about what has and has not happened.
+ * Starting a kernel is the one step the app cannot do silently — it spawns a
+ * process, needs a key, and can be confused by twelve different things. So it
+ * says what it found, what it is doing, and what failed, before handing over to
+ * the conversation.
  */
 export function BootPanel({ onReady }: { onReady: () => void }) {
   const [paths, setPaths] = useState<KernelPaths | null>(null)
@@ -83,8 +85,8 @@ export function BootPanel({ onReady }: { onReady: () => void }) {
       setPhase('handshaking')
       const result = await ipc.kernelInitialize({
         cwd: paths?.kernelDir ?? '.',
-        provider: 'opencode-go',
-        model: 'deepseek-v4.1-flash',
+        provider: PROVIDER,
+        model: MODEL,
       })
       append('initialize', JSON.stringify(result))
       setPhase('ready')
@@ -107,69 +109,87 @@ export function BootPanel({ onReady }: { onReady: () => void }) {
   const busy = phase === 'starting' || phase === 'handshaking'
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-4xl flex-col gap-4 p-6">
-      <header className="space-y-1">
-        <h1 className="text-xl font-semibold tracking-tight">DeepSeek Harness Desktop</h1>
-        <p className="text-muted-foreground text-sm">
-          M0 探针：这一步只证明 React → Rust → 内核 → 事件的链路通，不是最终界面。
-        </p>
-      </header>
+    <div className="relative flex h-full w-full items-center justify-center overflow-hidden p-6">
+      {/* A soft wash behind the card. An empty black rectangle reads as broken;
+          a lit one reads as waiting. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            'radial-gradient(52rem 26rem at 50% -8%, oklch(0.34 0.10 265 / 40%), transparent 70%)',
+        }}
+      />
 
-      <dl className="grid grid-cols-[7rem_1fr] gap-x-4 gap-y-1 text-sm">
-        <dt className="text-muted-foreground">内核目录</dt>
-        <dd className="truncate font-mono text-xs" title={paths?.kernelDir}>
-          {paths?.kernelDir ?? '…'}
-        </dd>
-        <dt className="text-muted-foreground">已拉取</dt>
-        <dd>{paths === null ? '…' : paths.fetched ? '是' : '否 —— 先跑 pnpm kernel:fetch'}</dd>
-        <dt className="text-muted-foreground">内核 HOME</dt>
-        <dd className="truncate font-mono text-xs" title={paths?.home}>
-          {paths?.home ?? '…'}
-        </dd>
-        <dt className="text-muted-foreground">状态</dt>
-        <dd className="font-mono text-xs">{phase}</dd>
-      </dl>
-
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={() => void start()}
-          disabled={busy || paths?.fetched !== true}
-          className="bg-primary text-primary-foreground rounded-md px-4 py-1.5 text-sm font-medium disabled:opacity-40"
-        >
-          {busy ? '握手中…' : '启动内核并握手'}
-        </button>
-        <button
-          type="button"
-          onClick={() => void stop()}
-          disabled={phase === 'idle' || busy}
-          className="bg-secondary text-secondary-foreground rounded-md px-4 py-1.5 text-sm font-medium disabled:opacity-40"
-        >
-          停止
-        </button>
-      </div>
-
-      {error !== null && (
-        <pre className="border-destructive/40 bg-destructive/10 text-destructive max-h-40 overflow-auto rounded-md border p-3 text-xs whitespace-pre-wrap">
-          {error}
-        </pre>
-      )}
-
-      <section className="border-border flex min-h-0 flex-1 flex-col rounded-md border">
-        <div className="border-border flex items-center justify-between border-b px-3 py-1.5 text-xs">
-          <span className="text-muted-foreground">内核帧（{log.length} 条）</span>
-          {dropped > 0 && <span className="text-destructive">丢弃 {dropped} 条</span>}
+      <div className="animate-pop-in border-border/70 bg-card/70 relative w-full max-w-md rounded-2xl border p-6 shadow-2xl backdrop-blur">
+        <div className="flex flex-col items-center gap-1 text-center">
+          <div className="bg-primary/10 ring-primary/20 mb-2 flex size-12 items-center justify-center rounded-2xl ring-1">
+            <svg viewBox="0 0 24 24" aria-hidden="true" className="text-primary size-6">
+              <circle cx="12" cy="12" r="3.6" fill="currentColor" />
+              <circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.5" />
+            </svg>
+          </div>
+          <h1 className="text-base font-semibold tracking-tight">DeepSeek Harness Desktop</h1>
+          <p className="text-muted-foreground text-xs">只取内核，界面自己写</p>
         </div>
-        <ol className="min-h-0 flex-1 select-text overflow-auto p-3 font-mono text-xs leading-relaxed">
-          {log.length === 0 && <li className="text-muted-foreground">还没有帧。</li>}
-          {log.map((line) => (
-            <li key={line.id} className="flex gap-2">
-              <span className="text-muted-foreground w-24 shrink-0 truncate">{line.label}</span>
-              <span className="break-all">{line.detail}</span>
-            </li>
-          ))}
-        </ol>
-      </section>
+
+        <dl className="mt-5 grid grid-cols-[4.5rem_1fr] gap-x-3 gap-y-2 text-xs">
+          <dt className="text-muted-foreground">内核</dt>
+          <dd className={paths?.fetched === false ? 'text-amber-300' : ''}>
+            {paths === null ? '…' : paths.fetched ? '已就绪' : '未拉取 —— 先跑 pnpm kernel:fetch'}
+          </dd>
+          <dt className="text-muted-foreground">路由</dt>
+          <dd className="truncate font-mono opacity-80">
+            {PROVIDER} / {MODEL}
+          </dd>
+          <dt className="text-muted-foreground">状态</dt>
+          <dd className="flex items-center gap-1.5 font-mono">
+            {busy && <span className="animate-breathe inline-block size-1.5 rounded-full bg-current" />}
+            {phase}
+          </dd>
+        </dl>
+
+        {error !== null && (
+          <pre className="border-destructive/40 bg-destructive/10 text-destructive mt-4 max-h-40 overflow-auto rounded-lg border p-2.5 text-[11px] whitespace-pre-wrap">
+            {error}
+          </pre>
+        )}
+
+        <div className="mt-5 flex gap-2">
+          <button
+            type="button"
+            onClick={() => void start()}
+            disabled={busy || paths?.fetched !== true}
+            className="bg-primary text-primary-foreground hover:bg-primary/90 flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all active:scale-[0.98] disabled:opacity-30"
+          >
+            {busy ? '握手中…' : '启动内核并握手'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void stop()}
+            disabled={phase === 'idle' || busy}
+            className="bg-secondary text-secondary-foreground hover:bg-secondary/70 rounded-lg px-3 py-2 text-sm transition-colors active:scale-[0.98] disabled:opacity-30"
+          >
+            停止
+          </button>
+        </div>
+
+        {dropped > 0 && <p className="text-destructive mt-2 text-[11px]">丢弃 {dropped} 条帧</p>}
+
+        {log.length > 0 && (
+          <details className="text-muted-foreground mt-4 text-[11px]">
+            <summary className="cursor-pointer select-none">启动日志 · {log.length} 条</summary>
+            <ol className="mt-1 max-h-32 overflow-auto font-mono">
+              {log.map((line) => (
+                <li key={line.id} className="flex gap-2">
+                  <span className="w-20 shrink-0 truncate opacity-60">{line.label}</span>
+                  <span className="break-all">{line.detail}</span>
+                </li>
+              ))}
+            </ol>
+          </details>
+        )}
+      </div>
     </div>
   )
 }

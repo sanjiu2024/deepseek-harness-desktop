@@ -150,18 +150,25 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-3 p-6">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-lg font-semibold tracking-tight">{chat.title ?? '新会话'}</h1>
-        <span className="text-muted-foreground font-mono text-xs">
-          seq {chat.lastSeq} · {sessionId.slice(0, 8)}
+    <div className="mx-auto flex h-full w-full max-w-3xl flex-col">
+      <header className="border-border/60 flex items-center justify-between gap-3 border-b px-6 py-3">
+        <div className="flex min-w-0 flex-col">
+          <h1 className="truncate text-sm font-semibold tracking-tight">
+            {chat.title ?? '新会话'}
+          </h1>
+          <span className="text-muted-foreground font-mono text-[11px]">
+            {chat.route !== null ? `${chat.route.provider} / ${chat.route.model}` : '未握手'}
+          </span>
+        </div>
+        <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
+          seq {chat.lastSeq}
         </span>
       </header>
 
-      <section className="min-h-0 flex-1 overflow-y-auto pr-1">
-        <ol className="flex flex-col gap-4">
+      <section className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        <ol className="flex flex-col gap-5">
           {chat.messages.length === 0 && (
-            <li className="text-muted-foreground text-sm">发一句话试试。</li>
+            <li className="text-muted-foreground animate-fade-up text-sm">发一句话试试。</li>
           )}
           {chat.messages.map((message, index) => (
             <MessageRow
@@ -176,11 +183,13 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
       </section>
 
       {chat.failure !== null && (
-        <FailureBanner message={chat.failure} />
+        <div className="mx-6 mb-2">
+          <FailureBanner message={chat.failure} />
+        </div>
       )}
 
       {error !== null && (
-        <pre className="border-destructive/40 bg-destructive/10 text-destructive max-h-32 overflow-auto rounded-md border p-2 text-xs whitespace-pre-wrap">
+        <pre className="border-destructive/40 bg-destructive/10 text-destructive mx-6 mb-2 max-h-32 overflow-auto rounded-lg border p-2.5 text-xs whitespace-pre-wrap">
           {error}
         </pre>
       )}
@@ -194,36 +203,48 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
         />
       )}
 
-      <footer className="flex flex-col gap-2">
-        <textarea
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault()
-              void send()
-            }
-          }}
-          rows={3}
-          placeholder="Enter 发送，Shift+Enter 换行"
-          className="border-input bg-card resize-none rounded-md border p-2 text-sm outline-none select-text"
-        />
-        <div className="flex items-center justify-between">
-          <span className="text-muted-foreground text-xs">
-            {streaming ? '回复中…' : ''}
-          </span>
+      <footer className="border-border/60 bg-background/80 flex flex-col gap-1.5 border-t px-6 py-3 backdrop-blur">
+        <div className="border-input bg-card focus-within:border-ring flex items-end gap-2 rounded-xl border p-2 transition-colors">
+          <textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                void send()
+              }
+            }}
+            rows={2}
+            placeholder="Enter 发送，Shift+Enter 换行"
+            className="max-h-40 min-h-9 flex-1 resize-none bg-transparent px-1 text-sm outline-none select-text"
+          />
           <button
             type="button"
             onClick={() => void send()}
             disabled={sending || draft.trim() === ''}
-            className="bg-primary text-primary-foreground rounded-md px-4 py-1.5 text-sm font-medium disabled:opacity-40"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 mb-0.5 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-all active:scale-[0.97] disabled:opacity-30"
           >
-            发送
+            {sending ? '发送中' : '发送'}
+            <svg viewBox="0 0 12 12" aria-hidden="true" className="size-3">
+              <path d="M2 6h7M6 3l3 3-3 3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </button>
         </div>
 
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
+            {streaming && (
+              <>
+                <span className="animate-breathe inline-block size-1.5 rounded-full bg-current" />
+                回复中…
+              </>
+            )}
+          </span>
+          <span className="text-muted-foreground font-mono text-[10px]">{sessionId.slice(0, 8)}</span>
+        </div>
+
         {Object.keys(requestCounts).length > 0 && (
-          <p className="text-muted-foreground text-[11px]">
+          <p className="text-muted-foreground text-[10px]">
             收到的请求帧：
             {Object.entries(requestCounts)
               .map(([method, count]) => `${method} ×${count}`)
@@ -232,20 +253,17 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
         )}
 
         {unknownKinds.length > 0 && (
-          // Which kernel events this view does not draw yet. Kept on screen while
-          // the surface is incomplete; M2 replaces it as the cards land.
-          <details className="text-muted-foreground text-[11px]">
+          <details className="text-muted-foreground text-[10px]">
             <summary className="cursor-pointer select-none">
               未渲染的内核事件 · {unknownKinds.length} 种
             </summary>
-            <p className="mt-1 font-mono break-all">{unknownKinds.join(' · ')}</p>
+            <p className="mt-0.5 font-mono break-all">{unknownKinds.join(' · ')}</p>
           </details>
         )}
       </footer>
     </div>
   )
 }
-
 /**
  * A failed turn used to render as nothing at all: the events arrived, the reducer
  * recorded the reason, and the view never looked. A chat that silently swallows a
