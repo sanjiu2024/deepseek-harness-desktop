@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] — 2026-11-15
+
+The approval round trip is now proven without a model, a sandbox, or a click.
+
+### Added
+
+- `crates/dsh-runtime/tests/fixtures/fake-kernel.mjs` — a minimal stdio peer that
+  handshakes, then sends an `approval/request` with a **string** id exactly like the real
+  kernel (`req_<hex>`), and exits 0 only if the answer comes back with that same id.
+- `tests/approval_roundtrip.rs` — spawns it through `KernelClient`, asserts the frame is
+  classified as a **request**, answers `allowed-once`, and asserts the fixture accepted it.
+
+Why this shape: the previous attempt at this test went through the real kernel and the model,
+so it passed or failed depending on whether the model chose to escalate — and I deleted it as
+"flaky" while it was actually reporting this bug. A fake peer removes both sources of
+non-determinism and tests only the seam that broke.
+
+### Verified
+
+- `cargo test -p dsh-runtime --test approval_roundtrip` → 2 passed (0.15s).
+- Full suite: 16 unit + 2 real-kernel integration + 2 round-trip tests.
+
+### Still unproven
+
+The React click → `invoke` hop. The Rust half is now covered end to end; if a restart still
+leaves a card at "执行中" after allowing, the `answer` line in `frames.log` says whether the
+button actually sent anything.
+
 ## [0.9.1] — 2026-11-15
 
 The frame log now records answers too, and the tool itself is confirmed healthy.
