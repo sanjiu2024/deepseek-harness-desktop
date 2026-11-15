@@ -19,6 +19,12 @@
 
 use std::path::{Path, PathBuf};
 
+mod export;
+mod titles;
+
+pub use export::render_markdown;
+pub use titles::SessionTitles;
+
 /// The session format generation this build understands.
 pub const CURRENT_FORMAT_VERSION: u32 = 4;
 
@@ -76,6 +82,8 @@ pub struct SessionSummary {
     pub event_count: usize,
     /// True when the session was spawned by a subagent tool.
     pub is_subagent: bool,
+    /// The session that spawned this one, when it was a subagent run.
+    pub parent_id: Option<String>,
 }
 
 /// One session's complete history.
@@ -98,6 +106,8 @@ pub enum StoreError {
     Io(#[from] std::io::Error),
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("session titles: {0}")]
+    Overlay(String),
 }
 
 /// Read-only view of a session root.
@@ -119,10 +129,17 @@ impl SessionStore {
     /// Unreadable entries are skipped rather than failing the listing: one corrupt
     /// log must not hide the other fifty.
     pub fn list(&self) -> Result<Vec<SessionSummary>, StoreError> {
+        let titles = SessionTitles::load(self.home());
         let mut out = Vec::new();
         for path in self.logs()? {
             match read_session(&path) {
-                Ok((header, events)) => out.push(summarize(&header, &events)),
+                Ok((header, events)) => {
+                    let mut summary = summarize(&header, &events);
+                    if let Some(renamed) = titles.get(&summary.id) {
+                        summary.title = renamed.to_owned();
+                    }
+                    out.push(summary);
+                }
                 Err(error) => {
                     tracing::debug!(target: "dsh_store", %error, path = %path.display(), "skipping unreadable session");
                 }
@@ -145,6 +162,44 @@ impl SessionStore {
             }
         }
         Err(fallback.unwrap_or_else(|| StoreError::NotFound(id.to_owned())))
+    }
+
+    /// The kernel home this store was opened against.
+    pub fn home(&self) -> &Path {
+        self.root.parent().unwrap_or(&self.root)
+    }
+
+    /// Give a session a user-chosen title.
+    ///
+    /// The kernel's log is not rewritten: the title is stored in the client's own overlay
+    /// and wins over the derived one at read time. A rename therefore survives the kernel
+    /// appending more events, and reverts cleanly.
+    pub fn rename(&self, id: &str, title: &str) -> Result<(), StoreError> {
+        let mut titles = SessionTitles::load(self.home());
+        titles.set(id, title).map_err(StoreError::Overlay)?;
+        Ok(())
+    }
+
+    /// Delete a session from disk, with its directory.
+    ///
+    /// Destructive and irreversible: the caller must have confirmed it. Nothing else in the
+    /// store can remove a log, which is why this is the only `remove_dir_all` in the crate.
+    pub fn delete(&self, id: &str) -> Result<(), StoreError> {
+        for path in self.logs()? {
+            let Ok((header, _)) = read_session(&path) else {
+                continue;
+            };
+            if header.id != id {
+                continue;
+            }
+            let dir = path.parent().ok_or_else(|| StoreError::NotFound(id.to_owned()))?;
+            std::fs::remove_dir_all(dir)?;
+            // A rename would otherwise outlive the session it described.
+            let mut titles = SessionTitles::load(self.home());
+            titles.set(id, "").map_err(StoreError::Overlay)?;
+            return Ok(());
+        }
+        Err(StoreError::NotFound(id.to_owned()))
     }
 
     /// Canonical log files, newest generation per session directory.
@@ -255,6 +310,7 @@ fn summarize(header: &SessionHeader, events: &[SessionEvent]) -> SessionSummary 
         event_count: events.len(),
         is_subagent: header.origin.as_deref() == Some("subagent")
             || header.parent_session.is_some(),
+        parent_id: header.parent_session.clone(),
     }
 }
 
@@ -420,5 +476,87 @@ mod tests {
     fn a_missing_root_is_an_empty_list_not_an_error() {
         let store = SessionStore::new(std::env::temp_dir().join("dsh-store-does-not-exist"));
         assert!(store.list().expect("list").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod rename_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("dsh-store-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).ok();
+        root
+    }
+
+    fn write_session(root: &Path, id: &str, title: Option<&str>) {
+        let dir = root.join(SESSIONS_DIR).join("--p--").join(id);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let header = format!(
+            r#"{{"type":"session","version":4,"id":"{id}","createdAt":1,"isSeeded":false,"delegationDepth":0}}"#
+        );
+        let mut lines = vec![header];
+        if let Some(title) = title {
+            lines.push(format!(
+                r#"{{"type":"session/title","seq":0,"time":2,"data":{{"title":"{title}"}}}}"#
+            ));
+        }
+        std::fs::write(dir.join("session.v4.jsonl"), lines.join("\n")).expect("write");
+    }
+
+    #[test]
+    fn a_rename_wins_over_the_derived_title() {
+        let root = scratch("rename");
+        write_session(&root, "a", Some("内核给的标题"));
+        let store = SessionStore::new(&root);
+
+        store.rename("a", "我的叫法").expect("rename");
+        let listed = store.list().expect("list");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(listed[0].title, "我的叫法");
+    }
+
+    #[test]
+    fn deleting_removes_the_directory_and_the_rename() {
+        let root = scratch("delete");
+        write_session(&root, "a", Some("要删的"));
+        let store = SessionStore::new(&root);
+        store.rename("a", "改名了").expect("rename");
+
+        store.delete("a").expect("delete");
+        let listed = store.list().expect("list");
+        let overlay = SessionTitles::load(&root);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(listed.is_empty(), "the session is gone");
+        assert_eq!(overlay.get("a"), None, "the rename went with it");
+    }
+
+    #[test]
+    fn deleting_an_unknown_id_is_an_error_not_a_silent_no_op() {
+        let root = scratch("delete-missing");
+        let store = SessionStore::new(&root);
+        let result = store.delete("nope");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(matches!(result, Err(StoreError::NotFound(_))));
+    }
+
+    #[test]
+    fn a_subagent_session_reports_its_parent() {
+        let root = scratch("parent");
+        let dir = root.join(SESSIONS_DIR).join("--p--").join("child");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(
+            dir.join("session.v4.jsonl"),
+            r#"{"type":"session","version":4,"id":"child","createdAt":1,"isSeeded":false,"delegationDepth":1,"parentSession":"parent"}"#,
+        )
+        .expect("write");
+
+        let listed = SessionStore::new(&root).list().expect("list");
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(listed[0].parent_id.as_deref(), Some("parent"));
+        assert!(listed[0].is_subagent);
     }
 }

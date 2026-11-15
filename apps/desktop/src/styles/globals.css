@@ -280,3 +280,41 @@ body {
   outline: 2px solid oklch(0.62 0.16 265 / 70%);
   outline-offset: 2px;
 }
+
+/* ── Light theme ──────────────────────────────────────────────────────────
+   Tailwind v4 tokens are custom properties, so overriding them on `.light`
+   re-themes every utility without touching a component. Values are not the
+   dark ones inverted: a light UI needs its own contrast ratios, and pure white
+   behind long model answers is tiring — hence the warm off-white. */
+.light {
+  --color-background: oklch(0.985 0.002 90);
+  --color-foreground: oklch(0.2 0.005 264);
+  --color-card: oklch(1 0 0);
+  --color-card-foreground: oklch(0.2 0.005 264);
+  --color-primary: oklch(0.35 0.02 264);
+  --color-primary-foreground: oklch(0.985 0 0);
+  --color-secondary: oklch(0.94 0.004 264);
+  --color-secondary-foreground: oklch(0.24 0.006 264);
+  --color-muted: oklch(0.94 0.004 264);
+  --color-muted-foreground: oklch(0.52 0.01 264);
+  --color-accent: oklch(0.94 0.004 264);
+  --color-accent-foreground: oklch(0.24 0.006 264);
+  --color-destructive: oklch(0.55 0.19 25);
+  --color-border: oklch(0.2 0.005 264 / 12%);
+  --color-input: oklch(0.2 0.005 264 / 16%);
+  --color-ring: oklch(0.55 0.02 264);
+}
+
+.light ::-webkit-scrollbar-thumb {
+  background: oklch(0.2 0.005 264 / 14%);
+  background-clip: content-box;
+}
+
+.light ::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.2 0.005 264 / 22%);
+  background-clip: content-box;
+}
+
+.light ::selection {
+  background: oklch(0.7 0.12 265 / 40%);
+}

@@ -68,6 +68,8 @@ export interface SessionSummary {
   updatedAt: number
   eventCount: number
   isSubagent: boolean
+  /** The session that spawned this one, for nesting subagent runs. */
+  parentId: string | null
 }
 
 /** The event row shape as it appears on disk. */
@@ -101,6 +103,12 @@ export const ipc = {
     invoke<SettingsSnapshot>('settings_set', { provider, model }),
   sessionList: (): Promise<SessionSummary[]> => invoke<SessionSummary[]>('session_list'),
   sessionLoad: (id: string): Promise<SessionHistory> => invoke<SessionHistory>('session_load', { id }),
+  sessionRename: (id: string, title: string): Promise<void> =>
+    invoke<void>('session_rename', { id, title }),
+  sessionDelete: (id: string): Promise<void> => invoke<void>('session_delete', { id }),
+  sessionExport: (id: string): Promise<string> => invoke<string>('session_export', { id }),
+  sessionExportTo: (id: string, path: string): Promise<void> =>
+    invoke<void>('session_export_to', { id, path }),
   kernelInitialize: (options: InitializeOptions): Promise<unknown> =>
     invoke<unknown>('kernel_initialize', {
       cwd: options.cwd,

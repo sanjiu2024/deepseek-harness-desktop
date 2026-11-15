@@ -1,28 +1,34 @@
 import { useEffect, useState } from 'react'
 import { ipc, type SessionSummary } from '@/lib/ipc.ts'
+import { exportSession } from '@/features/palette/CommandPalette.tsx'
 
 /**
  * The session list.
  *
  * The kernel keeps every session on disk but offers no "list" call, so this is a
- * projection of the store rather than something the runtime tells us about. It
- * refreshes on demand and after a turn starts, which is when a session first
- * becomes discoverable.
+ * projection of the store rather than something the runtime tells us about. Subagent runs
+ * nest under the session that spawned them — a child is part of a conversation, not a
+ * sibling of it.
  */
 export function SessionSidebar({
   activeId,
   refreshKey,
   onSelect,
   onNew,
+  onChanged,
 }: {
   activeId: string
-  /** Bump this to re-read the store; a new session only exists after its first turn. */
+  /** Bump to re-read the store; a session only exists after its first turn. */
   refreshKey: number
   onSelect: (session: SessionSummary) => void
   onNew: () => void
+  /** Called after a rename or delete so the shell can refresh too. */
+  onChanged?: () => void
 }) {
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -38,6 +44,35 @@ export function SessionSidebar({
       cancelled = true
     }
   }, [refreshKey])
+
+  const rename = async (id: string, title: string) => {
+    setRenaming(null)
+    try {
+      await ipc.sessionRename(id, title)
+      onChanged?.()
+    } catch (cause) {
+      setError(String(cause))
+    }
+  }
+
+  const remove = async (id: string) => {
+    setConfirming(null)
+    try {
+      await ipc.sessionDelete(id)
+      onChanged?.()
+    } catch (cause) {
+      setError(String(cause))
+    }
+  }
+
+  // Subagent runs hang off their parent; orphans stay at the top level so nothing is lost.
+  const roots = (sessions ?? []).filter(
+    (session) =>
+      session.parentId === null ||
+      !(sessions ?? []).some((candidate) => candidate.id === session.parentId),
+  )
+  const childrenOf = (id: string) =>
+    (sessions ?? []).filter((session) => session.parentId === id)
 
   return (
     <aside className="border-border/60 bg-card/30 flex h-full w-64 shrink-0 flex-col border-r">
@@ -66,35 +101,168 @@ export function SessionSidebar({
         )}
 
         <ul className="flex flex-col gap-0.5">
-          {(sessions ?? []).map((session) => {
-            const active = session.id === activeId
-            return (
-              <li key={session.id}>
-                <button
-                  type="button"
-                  onClick={() => onSelect(session)}
-                  className={`group flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left transition-colors ${
-                    active ? 'bg-secondary/70' : 'hover:bg-secondary/40'
-                  }`}
-                >
-                  <span className="flex items-center gap-1.5">
-                    {session.isSubagent && (
-                      <span className="text-muted-foreground shrink-0 rounded bg-white/10 px-1 text-[9px]">
-                        子
-                      </span>
-                    )}
-                    <span className="truncate text-xs font-medium">{session.title}</span>
-                  </span>
-                  <span className="text-muted-foreground font-mono text-[10px]">
-                    {relativeTime(session.updatedAt)} · {session.eventCount} 条
-                  </span>
-                </button>
-              </li>
-            )
-          })}
+          {roots.map((session) => (
+            <li key={session.id}>
+              <Row
+                session={session}
+                active={session.id === activeId}
+                renaming={renaming === session.id}
+                confirming={confirming === session.id}
+                onSelect={() => onSelect(session)}
+                onRename={() => setRenaming(session.id)}
+                onRenameDone={(title) => void rename(session.id, title)}
+                onRenameCancel={() => setRenaming(null)}
+                onAskDelete={() => setConfirming(session.id)}
+                onDelete={() => void remove(session.id)}
+                onCancelDelete={() => setConfirming(null)}
+              />
+              {childrenOf(session.id).length > 0 && (
+                <ul className="border-border/50 ml-3 flex flex-col gap-0.5 border-l pl-2">
+                  {childrenOf(session.id).map((child) => (
+                    <li key={child.id}>
+                      <Row
+                        session={child}
+                        active={child.id === activeId}
+                        renaming={renaming === child.id}
+                        confirming={confirming === child.id}
+                        child
+                        onSelect={() => onSelect(child)}
+                        onRename={() => setRenaming(child.id)}
+                        onRenameDone={(title) => void rename(child.id, title)}
+                        onRenameCancel={() => setRenaming(null)}
+                        onAskDelete={() => setConfirming(child.id)}
+                        onDelete={() => void remove(child.id)}
+                        onCancelDelete={() => setConfirming(null)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
         </ul>
       </nav>
     </aside>
+  )
+}
+
+function Row({
+  session,
+  active,
+  renaming,
+  confirming,
+  child = false,
+  onSelect,
+  onRename,
+  onRenameDone,
+  onRenameCancel,
+  onAskDelete,
+  onDelete,
+  onCancelDelete,
+}: {
+  session: SessionSummary
+  active: boolean
+  renaming: boolean
+  confirming: boolean
+  child?: boolean
+  onSelect: () => void
+  onRename: () => void
+  onRenameDone: (title: string) => void
+  onRenameCancel: () => void
+  onAskDelete: () => void
+  onDelete: () => void
+  onCancelDelete: () => void
+}) {
+  const [draft, setDraft] = useState(session.title)
+
+  if (renaming) {
+    return (
+      <input
+        // eslint-disable-next-line jsx-a11y/no-autofocus -- it just opened; focus is the point
+        autoFocus
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => onRenameDone(draft)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') onRenameDone(draft)
+          if (event.key === 'Escape') onRenameCancel()
+        }}
+        className="border-ring bg-background w-full rounded-md border px-2 py-1 text-xs outline-none select-text"
+      />
+    )
+  }
+
+  if (confirming) {
+    return (
+      <div className="border-destructive/40 bg-destructive/10 flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px]">
+        <span className="text-destructive truncate">删除这条会话？</span>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="bg-destructive/20 text-destructive hover:bg-destructive/30 ml-auto shrink-0 rounded px-1.5 py-0.5 transition-colors"
+        >
+          删
+        </button>
+        <button
+          type="button"
+          onClick={onCancelDelete}
+          className="text-muted-foreground hover:text-foreground shrink-0 rounded px-1 py-0.5 transition-colors"
+        >
+          算了
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className={`group flex items-center gap-1 rounded-lg pr-1 transition-colors ${
+        active ? 'bg-secondary/70' : 'hover:bg-secondary/40'
+      }`}
+    >
+      <button
+        type="button"
+        onClick={onSelect}
+        onDoubleClick={onRename}
+        className="flex min-w-0 flex-1 flex-col gap-0.5 px-2 py-1.5 text-left"
+      >
+        <span className="truncate text-xs font-medium">
+          {child && <span className="text-muted-foreground mr-1 text-[10px]">↳</span>}
+          {session.title}
+        </span>
+        <span className="text-muted-foreground font-mono text-[10px]">
+          {relativeTime(session.updatedAt)} · {session.eventCount} 条
+        </span>
+      </button>
+
+      {/* Actions appear on hover or focus so the list stays readable. */}
+      <div className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        <button
+          type="button"
+          onClick={onRename}
+          title="重命名"
+          className="text-muted-foreground hover:text-foreground flex size-5 items-center justify-center rounded transition-colors"
+        >
+          ✎
+        </button>
+        <button
+          type="button"
+          onClick={() => void exportSession(session.id)}
+          title="导出 Markdown"
+          className="text-muted-foreground hover:text-foreground flex size-5 items-center justify-center rounded transition-colors"
+        >
+          ↓
+        </button>
+        <button
+          type="button"
+          onClick={onAskDelete}
+          title="删除"
+          className="text-muted-foreground hover:text-destructive flex size-5 items-center justify-center rounded transition-colors"
+        >
+          ×
+        </button>
+      </div>
+    </div>
   )
 }
 

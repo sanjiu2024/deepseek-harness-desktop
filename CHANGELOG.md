@@ -9,6 +9,34 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Added — sessions are manageable, and the app has a keyboard
+
+- **Rename** (✎ or double-click) and **delete** (× with a confirm step) in the sidebar. The
+  kernel's log is never rewritten: a rename lives in the client's own overlay
+  (`session-titles.json`) and wins at read time, so it survives the kernel appending events and
+  reverts cleanly. Deleting removes the session directory and the rename together.
+- **Subagent runs nest** under the session that spawned them, using `parentSession` from the
+  header. An orphaned child stays at the top level: nothing is hidden because a parent vanished.
+- **Export to Markdown** (↓): the transcript is rendered by the store, not by a second
+  formatter, and written straight to the path the user picks. Reasoning blocks are excluded —
+  thinking is useful live and noise in a saved file. That filter was a real bug: reasoning
+  blocks carry a `text` field, so filtering on the key alone leaked the model's thoughts into
+  the export.
+- **Command palette** (Ctrl/Cmd+K): actions by name, plus sessions by title.
+- **Light theme**, applied before the first paint so the window never flashes the wrong one.
+  Tokens are overridden on `.light`, so no component knows a colour.
+
+### Changed
+
+- `render_markdown` moved to `dsh-store` — it is session reading, which is that crate's job,
+  and the app crate stays assembly.
+
+### Tests
+
+- Front end: 71 passed (5 palette tests, sidebar covers rename/delete/nesting).
+- Rust: `dsh-store` 14 + 1 real-home; `dsh-runtime` 20.
+
+
 ### Added — the app is configurable and observable
 
 - **Settings panel** (gear in the header): provider and model, persisted to

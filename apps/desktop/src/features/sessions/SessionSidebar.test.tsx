@@ -19,6 +19,7 @@ function session(id: string, title: string, overrides: Partial<SessionSummary> =
     updatedAt: Date.now() - 5 * 60_000,
     eventCount: 12,
     isSubagent: false,
+    parentId: null,
     ...overrides,
   }
 }
@@ -48,11 +49,17 @@ describe('session sidebar', () => {
     expect(opened).toEqual(['b'])
   })
 
-  it('marks subagent sessions so a child is not mistaken for a conversation', async () => {
-    invoke.mockResolvedValue([session('a', '子任务', { isSubagent: true })])
+  it('nests a subagent run under the session that spawned it', async () => {
+    invoke.mockResolvedValue([
+      session('parent', '主线'),
+      session('child', '子任务', { isSubagent: true, parentId: 'parent' }),
+    ])
     render(<SessionSidebar activeId="x" refreshKey={0} onSelect={() => {}} onNew={() => {}} />)
 
-    expect(await screen.findByText('子')).toBeTruthy()
+    await screen.findByText('主线')
+    // The nesting marker is what tells a reader these two are one conversation.
+    expect(screen.getByText('↳')).toBeTruthy()
+    expect(screen.getByText('子任务')).toBeTruthy()
   })
 
   it('re-reads the store when the shell asks it to', async () => {

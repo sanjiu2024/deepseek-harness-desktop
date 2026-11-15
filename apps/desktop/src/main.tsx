@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { App } from './App.tsx'
+import { primeTheme } from './lib/theme.ts'
 import './styles/globals.css'
 
 const queryClient = new QueryClient({
@@ -18,6 +19,9 @@ const queryClient = new QueryClient({
 
 const rootElement = document.getElementById('root')
 if (rootElement === null) throw new Error('index.html is missing #root')
+
+// Before the first paint: a dark window flashing to light is worse than either theme.
+primeTheme()
 
 createRoot(rootElement).render(
   <StrictMode>

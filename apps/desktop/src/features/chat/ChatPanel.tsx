@@ -38,10 +38,13 @@ import { MessageRow } from './MessageRow.tsx'
 export function ChatPanel({
   sessionId,
   onActivity,
+  onToggleTheme,
 }: {
   sessionId: string
   /** Called when this session first produces something worth listing. */
   onActivity?: () => void
+  /** Flips the theme; the palette offers the same action by name. */
+  onToggleTheme?: () => void
 }) {
   const [chat, setChat] = useState<ChatState>(emptyChat)
   const [draft, setDraft] = useState('')
@@ -211,6 +214,18 @@ export function ChatPanel({
               ↑{compact(chat.usage.totalInput)} ↓{compact(chat.usage.totalOutput)}
             </span>
           )}
+          <button
+            type="button"
+            onClick={() => onToggleTheme?.()}
+            title="切换主题"
+            aria-label="切换主题"
+            className="text-muted-foreground hover:bg-secondary/60 hover:text-foreground flex size-6 items-center justify-center rounded-md transition-colors active:scale-95"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true" className="size-3.5">
+              <circle cx="8" cy="8" r="3.2" fill="currentColor" opacity="0.85" />
+              <path d="M8 1v1.4M8 13.6V15M1 8h1.4M13.6 8H15M3 3l1 1M12 12l1 1M13 3l-1 1M4 12l-1 1" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+            </svg>
+          </button>
           <button
             type="button"
             onClick={() => setSettingsOpen(true)}

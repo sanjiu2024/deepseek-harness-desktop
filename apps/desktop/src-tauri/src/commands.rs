@@ -387,6 +387,10 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         session_load,
         settings_get,
         settings_set,
+        session_rename,
+        session_delete,
+        session_export,
+        session_export_to,
         kernel_stop,
     ]
 }
@@ -394,4 +398,44 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
 #[allow(dead_code)]
 fn _assert_state_is_managed(app: &AppHandle) -> bool {
     app.try_state::<AppState>().is_some()
+}
+
+/// Rename a session. The kernel's log is untouched; see `dsh_store::SessionTitles`.
+#[tauri::command]
+pub fn session_rename(state: State<'_, AppState>, id: String, title: String) -> Result<(), String> {
+    dsh_store::SessionStore::new(&state.dsh_home)
+        .rename(&id, &title)
+        .map_err(|error| error.to_string())
+}
+
+/// Delete a session from disk. Irreversible — the UI confirms first.
+#[tauri::command]
+pub fn session_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    tracing::info!(target: "dsh_desktop_app", %id, "session_delete");
+    dsh_store::SessionStore::new(&state.dsh_home)
+        .delete(&id)
+        .map_err(|error| error.to_string())
+}
+
+/// One session rendered as Markdown, for export.
+#[tauri::command]
+pub fn session_export(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    let history = dsh_store::SessionStore::new(&state.dsh_home)
+        .load(&id)
+        .map_err(|error| error.to_string())?;
+    Ok(dsh_store::render_markdown(&history))
+}
+
+/// Export a session straight to a path chosen by the user.
+#[tauri::command]
+pub fn session_export_to(
+    state: State<'_, AppState>,
+    id: String,
+    path: String,
+) -> Result<(), String> {
+    let history = dsh_store::SessionStore::new(&state.dsh_home)
+        .load(&id)
+        .map_err(|error| error.to_string())?;
+    let markdown = dsh_store::render_markdown(&history);
+    std::fs::write(&path, markdown).map_err(|error| format!("{path}: {error}"))
 }
