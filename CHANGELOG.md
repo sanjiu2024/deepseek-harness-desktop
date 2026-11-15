@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] — 2026-11-15
+
+A frame log, because "the dialog never appeared" has two opposite causes.
+
+### Added
+
+- `DSH_DESKTOP_LOG_FRAMES=1` writes one line per forwarded frame to
+  `<dsh_home>/frames.log` (`kind<TAB>method`). The two explanations for a missing approval
+  dialog — the frame never reached the client, or it reached it and the view did not draw it —
+  need opposite fixes, and a screenshot cannot tell them apart. This does.
+
+### Found
+
+- The kernel is not the problem, and neither is the Rust client: with the app's own
+  `.dev-home`, a headless run receives `approval/asked` **and** the `approval/request` that
+  follows it, answers `allowed-once`, and the turn completes. So the break is downstream of
+  `KernelClient::subscribe`.
+- Correction to the previous entry: an earlier version of that probe reported zero approvals on
+  `.dev-home` and I read it as a reproduction. The probe sent `session/prompt` before
+  `initialize` returned, so the runtime correctly rejected it and nothing ever started. Fixed,
+  and the same home then behaved.
+
+### Verified
+
+- `pnpm --filter @dsh-desktop/app test` → 47 passed. `cargo clippy` with `-D warnings` clean.
+- The frame log itself is not yet exercised end to end: it needs the app's kernel started from
+  the UI, which cannot be driven from here.
+
 ## [0.8.0] — 2026-11-15
 
 Thinking is rendered where it happened, and a stuck approval can no longer hide.

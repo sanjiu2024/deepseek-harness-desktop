@@ -222,9 +222,31 @@ fn emit(app: &AppHandle, frame: Incoming) {
     // describe; losing one frame beats crashing the forwarder.
     match serde_json::to_value(frame) {
         Ok(value) => {
+            trace_frame(app, &value);
             let _ = app.emit(KERNEL_EVENT, value);
         }
         Err(error) => tracing::warn!(target: "dsh_desktop_app", %error, "dropped an unserialisable frame"),
+    }
+}
+
+/// Append one line per forwarded frame when `DSH_DESKTOP_LOG_FRAMES` is set.
+///
+/// "The dialog never appeared" has two very different causes — the frame never
+/// reached the client, or it reached the client and the view did not draw it —
+/// and they need opposite fixes. A log of what was actually forwarded separates
+/// them without anyone reading a screenshot.
+fn trace_frame(app: &AppHandle, value: &serde_json::Value) {
+    if std::env::var_os("DSH_DESKTOP_LOG_FRAMES").is_none() {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let path = state.dsh_home.join("frames.log");
+    let kind = value.get("kind").and_then(serde_json::Value::as_str).unwrap_or("?");
+    let method = value.get("method").and_then(serde_json::Value::as_str).unwrap_or("-");
+    let line = format!("{kind}\t{method}\n");
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        use std::io::Write;
+        let _ = file.write_all(line.as_bytes());
     }
 }
 
