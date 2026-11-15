@@ -21,6 +21,12 @@ pub const PTY_DATA_EVENT: &str = "pty://data";
 /// One terminal ended.
 pub const PTY_EXIT_EVENT: &str = "pty://exit";
 
+/// How many shells may exist at once.
+///
+/// Each one is a real process with a console and a reader thread. A UI bug that opens one per
+/// render would otherwise end with a hundred PowerShell processes and no obvious cause.
+const MAX_TERMINALS: usize = 8;
+
 /// Open shells, by the id the front end minted.
 #[derive(Default)]
 pub struct Terminals {
@@ -67,11 +73,16 @@ pub fn pty_open(
         },
     )?;
 
-    terminals
-        .shells
-        .lock()
-        .expect("terminals lock")
-        .insert(id.clone(), Arc::new(pty));
+    {
+        let mut shells = terminals.shells.lock().expect("terminals lock");
+        if shells.len() >= MAX_TERMINALS {
+            pty.close();
+            return Err(format!(
+                "already {MAX_TERMINALS} terminals open — close one first"
+            ));
+        }
+        shells.insert(id.clone(), Arc::new(pty));
+    }
 
     Ok(PtyOpened {
         id,

@@ -24,10 +24,7 @@ impl SessionTitles {
     /// losing a rename is annoying, failing to start is worse.
     pub fn load(home: &Path) -> Self {
         let path = home.join(OVERLAY);
-        let titles = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|raw| serde_json::from_str::<BTreeMap<String, String>>(raw.trim_start_matches('\u{feff}')).ok())
-            .unwrap_or_default();
+        let titles = read_overlay(&path);
         Self { path, titles }
     }
 
@@ -36,7 +33,14 @@ impl SessionTitles {
     }
 
     /// Set or clear a rename. An empty title removes the override, restoring the derived one.
+    ///
+    /// Serialised process-wide: `set` is a read-modify-write of a shared file, and two Tauri
+    /// commands (rename in one window, delete in another) would otherwise each write a map that
+    /// is missing the other's change.
     pub fn set(&mut self, id: &str, title: &str) -> Result<(), String> {
+        let _guard = overlay_lock();
+        // Re-read under the lock: this instance's map may predate the other writer's change.
+        self.titles = read_overlay(&self.path);
         let title = title.trim();
         if title.is_empty() {
             self.titles.remove(id);
@@ -46,13 +50,32 @@ impl SessionTitles {
         self.save()
     }
 
+    /// Persist the overlay atomically.
+    ///
+    /// A whole-file replace of a file that is read back as one JSON document: a half-written
+    /// overlay is a file that fails to parse and silently loses **every** rename.
     fn save(&self) -> Result<(), String> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
         let body = serde_json::to_string_pretty(&self.titles).map_err(|error| error.to_string())?;
-        std::fs::write(&self.path, body).map_err(|error| format!("{}: {error}", self.path.display()))
+        crate::fsutil::write_atomic(&self.path, body.as_bytes())
+            .map_err(|error| format!("{}: {error}", self.path.display()))
     }
+}
+
+fn read_overlay(path: &Path) -> BTreeMap<String, String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| {
+            serde_json::from_str::<BTreeMap<String, String>>(raw.trim_start_matches('\u{feff}')).ok()
+        })
+        .unwrap_or_default()
+}
+
+/// One writer at a time for the overlay file, for the life of the process.
+fn overlay_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]
@@ -96,5 +119,30 @@ mod tests {
         let titles = SessionTitles::load(&home);
         let _ = std::fs::remove_dir_all(&home);
         assert_eq!(titles.get("a"), None);
+    }
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use super::*;
+
+    #[test]
+    fn two_writers_do_not_lose_each_others_rename() {
+        // `set` is a read-modify-write of a shared file. Without the lock and the re-read, the
+        // second writer's map — built before the first writer saved — would erase the first one.
+        let home = std::env::temp_dir().join(format!("dsh-titles-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("scratch");
+
+        let mut first = SessionTitles::load(&home);
+        let mut second = SessionTitles::load(&home);
+        first.set("a", "甲").expect("first");
+        second.set("b", "乙").expect("second");
+
+        let merged = SessionTitles::load(&home);
+        let _ = std::fs::remove_dir_all(&home);
+
+        assert_eq!(merged.get("a"), Some("甲"), "the first rename survived");
+        assert_eq!(merged.get("b"), Some("乙"));
     }
 }

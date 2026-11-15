@@ -9,6 +9,37 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Fixed — files are written atomically
+
+`settings.json`, the rename overlay and `provider.env` were overwritten in place. Every one of
+them is read back **whole** on the next launch, so a crash between truncate and write leaves
+JSON that parses to nothing and the setting silently returns to its default — a bug that only
+appears after an abnormal exit, which is the hardest kind to believe.
+
+`dsh_store::write_atomic` writes a sibling temp file, `sync_all`, then `rename`. The temp file
+is a sibling rather than a system temp file because `rename` is only atomic within one
+filesystem — across drives it is a copy.
+
+### Fixed — two renames could lose one
+
+`SessionTitles::set` is a read-modify-write of one shared file. Two windows renaming at the same
+moment each built a map that predated the other's save, so the second write erased the first
+rename. It is now serialised process-wide and **re-reads inside the lock**. Verified by
+`two_writers_do_not_lose_each_others_rename`.
+
+### Added — a cap on terminals
+
+Eight shells at once, enforced in `pty_open`. Each is a real process with a console and a reader
+thread; a UI bug that opened one per render would otherwise end with a hundred PowerShell
+processes and no obvious cause.
+
+### Verified
+
+```
+cargo test -p dsh-store --release → 25 + 1 real-home (3 atomic, 1 concurrency)
+cargo clippy --workspace --all-targets --release -D warnings → clean
+```
+
 ### Changed — deleting a session is recoverable
 
 - `session_delete` now **renames the directory into `trash/<id>-<timestamp>/`** instead of

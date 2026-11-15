@@ -103,7 +103,10 @@ impl Settings {
         std::fs::create_dir_all(home).map_err(|error| error.to_string())?;
         let path = home.join("settings.json");
         let body = serde_json::to_string_pretty(self).map_err(|error| error.to_string())?;
-        std::fs::write(&path, body).map_err(|error| format!("{}: {error}", path.display()))
+        // Atomic: settings.json is read back as one JSON document on every launch, and a
+        // half-written one means the app starts on the defaults and nobody knows why.
+        dsh_store::write_atomic(&path, body.as_bytes())
+            .map_err(|error| format!("{}: {error}", path.display()))
     }
 }
 

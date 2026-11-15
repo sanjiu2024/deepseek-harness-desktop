@@ -20,9 +20,11 @@
 use std::path::{Path, PathBuf};
 
 mod export;
+pub mod fsutil;
 mod titles;
 
 pub use export::render_markdown;
+pub use fsutil::write_atomic;
 pub use titles::SessionTitles;
 
 /// The session format generation this build understands.
