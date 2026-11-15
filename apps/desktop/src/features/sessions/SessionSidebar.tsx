@@ -1,14 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ipc, type SessionSummary } from '@/lib/ipc.ts'
 import { exportSession } from '@/features/palette/CommandPalette.tsx'
 
 /**
  * The session list.
  *
- * The kernel keeps every session on disk but offers no "list" call, so this is a
- * projection of the store rather than something the runtime tells us about. Subagent runs
- * nest under the session that spawned them — a child is part of a conversation, not a
- * sibling of it.
+ * Grouped by day, because "yesterday" is how people remember a conversation — an absolute
+ * timestamp in every row is precision nobody asked for. A filter box on top: with forty
+ * sessions, scrolling is not the way to find one.
+ *
+ * Subagent runs nest under the session that spawned them; a child is part of a conversation,
+ * not a sibling of it.
  */
 export function SessionSidebar({
   activeId,
@@ -29,6 +31,7 @@ export function SessionSidebar({
   const [error, setError] = useState<string | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<string | null>(null)
+  const [filter, setFilter] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -65,82 +68,108 @@ export function SessionSidebar({
     }
   }
 
-  // Subagent runs hang off their parent; orphans stay at the top level so nothing is lost.
-  const roots = (sessions ?? []).filter(
+  const filtered = useMemo(() => {
+    const needle = filter.trim().toLowerCase()
+    if (needle === '' || sessions === null) return sessions ?? []
+    return sessions.filter((session) => session.title.toLowerCase().includes(needle))
+  }, [filter, sessions])
+
+  const roots = filtered.filter(
     (session) =>
-      session.parentId === null ||
-      !(sessions ?? []).some((candidate) => candidate.id === session.parentId),
+      session.parentId === null || !filtered.some((candidate) => candidate.id === session.parentId),
   )
-  const childrenOf = (id: string) =>
-    (sessions ?? []).filter((session) => session.parentId === id)
+  const childrenOf = (id: string) => filtered.filter((session) => session.parentId === id)
+
+  // Day buckets in the order they appear: the store already sorts newest first, so grouping
+  // only has to notice when the bucket changes.
+  const groups: Array<{ label: string; items: SessionSummary[] }> = []
+  for (const session of roots) {
+    const label = dayLabel(session.updatedAt)
+    const last = groups[groups.length - 1]
+    if (last !== undefined && last.label === label) last.items.push(session)
+    else groups.push({ label, items: [session] })
+  }
 
   return (
     <aside className="border-border/60 bg-card/30 flex h-full w-64 shrink-0 flex-col border-r">
-      <div className="flex items-center justify-between px-3 py-3">
-        <span className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-          会话
-        </span>
+      <div className="flex items-center gap-1 px-2 pt-2.5">
+        <input
+          value={filter}
+          onChange={(event) => setFilter(event.target.value)}
+          placeholder="筛选会话"
+          className="border-input bg-background/60 focus:border-ring min-w-0 flex-1 rounded-md border px-2 py-1 text-[11px] outline-none transition-colors select-text"
+        />
         <button
           type="button"
           onClick={onNew}
-          title="新会话"
-          className="text-muted-foreground hover:bg-secondary/60 hover:text-foreground flex size-6 items-center justify-center rounded-md text-base leading-none transition-colors active:scale-95"
+          title="新会话（Ctrl/Cmd+K → 新建）"
+          className="text-muted-foreground hover:bg-secondary/60 hover:text-foreground flex size-6 shrink-0 items-center justify-center rounded-md text-base leading-none transition-colors active:scale-95"
         >
           +
         </button>
       </div>
 
       {error !== null && (
-        <p className="text-destructive px-3 pb-2 text-[11px] whitespace-pre-wrap">{error}</p>
+        <p className="text-destructive px-3 pt-2 text-[11px] whitespace-pre-wrap">{error}</p>
       )}
 
-      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+      <nav className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         {sessions === null && <p className="text-muted-foreground px-1 text-xs">读取中…</p>}
         {sessions !== null && sessions.length === 0 && (
           <p className="text-muted-foreground px-1 text-xs">还没有历史会话。发一句话试试。</p>
         )}
+        {sessions !== null && sessions.length > 0 && roots.length === 0 && (
+          <p className="text-muted-foreground px-1 text-xs">没有匹配的会话。</p>
+        )}
 
-        <ul className="flex flex-col gap-0.5">
-          {roots.map((session) => (
-            <li key={session.id}>
-              <Row
-                session={session}
-                active={session.id === activeId}
-                renaming={renaming === session.id}
-                confirming={confirming === session.id}
-                onSelect={() => onSelect(session)}
-                onRename={() => setRenaming(session.id)}
-                onRenameDone={(title) => void rename(session.id, title)}
-                onRenameCancel={() => setRenaming(null)}
-                onAskDelete={() => setConfirming(session.id)}
-                onDelete={() => void remove(session.id)}
-                onCancelDelete={() => setConfirming(null)}
-              />
-              {childrenOf(session.id).length > 0 && (
-                <ul className="border-border/50 ml-3 flex flex-col gap-0.5 border-l pl-2">
-                  {childrenOf(session.id).map((child) => (
-                    <li key={child.id}>
-                      <Row
-                        session={child}
-                        active={child.id === activeId}
-                        renaming={renaming === child.id}
-                        confirming={confirming === child.id}
-                        child
-                        onSelect={() => onSelect(child)}
-                        onRename={() => setRenaming(child.id)}
-                        onRenameDone={(title) => void rename(child.id, title)}
-                        onRenameCancel={() => setRenaming(null)}
-                        onAskDelete={() => setConfirming(child.id)}
-                        onDelete={() => void remove(child.id)}
-                        onCancelDelete={() => setConfirming(null)}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </li>
-          ))}
-        </ul>
+        {groups.map((group) => (
+          <section key={group.label} className="mb-2">
+            <h3 className="text-muted-foreground px-1 pb-1 text-[10px] font-medium tracking-wide uppercase">
+              {group.label}
+            </h3>
+            <ul className="flex flex-col gap-0.5">
+              {group.items.map((session) => (
+                <li key={session.id}>
+                  <Row
+                    session={session}
+                    active={session.id === activeId}
+                    renaming={renaming === session.id}
+                    confirming={confirming === session.id}
+                    onSelect={() => onSelect(session)}
+                    onRename={() => setRenaming(session.id)}
+                    onRenameDone={(title) => void rename(session.id, title)}
+                    onRenameCancel={() => setRenaming(null)}
+                    onAskDelete={() => setConfirming(session.id)}
+                    onDelete={() => void remove(session.id)}
+                    onCancelDelete={() => setConfirming(null)}
+                  />
+                  {childrenOf(session.id).length > 0 && (
+                    <ul className="border-border/50 ml-3 flex flex-col gap-0.5 border-l pl-2">
+                      {childrenOf(session.id).map((child) => (
+                        <li key={child.id}>
+                          <Row
+                            session={child}
+                            active={child.id === activeId}
+                            renaming={renaming === child.id}
+                            confirming={confirming === child.id}
+                            child
+                            onSelect={() => onSelect(child)}
+                            onRename={() => setRenaming(child.id)}
+                            onRenameDone={(title) => void rename(child.id, title)}
+                            onRenameCancel={() => setRenaming(null)}
+                            onAskDelete={() => setConfirming(child.id)}
+                            onDelete={() => void remove(child.id)}
+                            onCancelDelete={() => setConfirming(null)}
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
       </nav>
     </aside>
   )
@@ -174,11 +203,16 @@ function Row({
   onCancelDelete: () => void
 }) {
   const [draft, setDraft] = useState(session.title)
+  const input = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (renaming) input.current?.select()
+  }, [renaming])
 
   if (renaming) {
     return (
       <input
-        // eslint-disable-next-line jsx-a11y/no-autofocus -- it just opened; focus is the point
+        ref={input}
         autoFocus
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
@@ -226,12 +260,12 @@ function Row({
         onDoubleClick={onRename}
         className="flex min-w-0 flex-1 flex-col gap-0.5 px-2 py-1.5 text-left"
       >
-        <span className="truncate text-xs font-medium">
-          {child && <span className="text-muted-foreground mr-1 text-[10px]">↳</span>}
-          {session.title}
+        <span className="flex items-center gap-1 truncate text-xs font-medium">
+          {child && <span className="text-muted-foreground shrink-0 text-[10px]">↳</span>}
+          <span className="truncate">{session.title}</span>
         </span>
         <span className="text-muted-foreground font-mono text-[10px]">
-          {relativeTime(session.updatedAt)} · {session.eventCount} 条
+          {clockTime(session.updatedAt)} · {session.eventCount} 条
         </span>
       </button>
 
@@ -266,13 +300,19 @@ function Row({
   )
 }
 
-/** "刚刚 / 5 分钟 / 3 小时 / 2 天 / 日期" — enough precision to recognise a session. */
-function relativeTime(epochMs: number): string {
-  const delta = Date.now() - epochMs
-  if (delta < 60_000) return '刚刚'
-  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)} 分钟前`
-  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)} 小时前`
-  if (delta < 7 * 86_400_000) return `${Math.floor(delta / 86_400_000)} 天前`
+/** 今天 / 昨天 / 本周 / 更早 — the buckets people actually remember in. */
+function dayLabel(epochMs: number): string {
+  const start = new Date()
+  start.setHours(0, 0, 0, 0)
+  const midnight = start.getTime()
+  if (epochMs >= midnight) return '今天'
+  if (epochMs >= midnight - 86_400_000) return '昨天'
+  if (epochMs >= midnight - 7 * 86_400_000) return '本周'
+  return '更早'
+}
+
+/** HH:MM inside a day bucket; the bucket already carries the date. */
+function clockTime(epochMs: number): string {
   const date = new Date(epochMs)
-  return `${date.getMonth() + 1}/${date.getDate()}`
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }

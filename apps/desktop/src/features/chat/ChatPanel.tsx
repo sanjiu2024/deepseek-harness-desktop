@@ -163,9 +163,26 @@ export function ChatPanel({
     }
   }, [sessionId])
 
+  /**
+   * Follow the stream only when the reader is already at the bottom.
+   *
+   * Unconditional `scrollIntoView` is what makes a chat unusable: scroll up to reread
+   * something while the model is answering and it yanks you back on every chunk.
+   */
+  const follow = useRef(true)
+  const [awayFromBottom, setAwayFromBottom] = useState(false)
+
+  const onScroll = (event: React.UIEvent<HTMLDivElement>) => {
+    const element = event.currentTarget
+    // 24px of slack: a reader parked "almost" at the bottom still wants the stream.
+    const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 24
+    follow.current = atBottom
+    setAwayFromBottom(!atBottom)
+  }
+
   useEffect(() => {
-    bottom.current?.scrollIntoView({ block: 'end' })
-  }, [chat.messages])
+    if (follow.current) bottom.current?.scrollIntoView({ block: 'end' })
+  }, [chat.messages, chat.active])
 
   // With live chunks the last message is the assistant's from the first delta,
   // so the state has to come from the turn, not from the message list.
@@ -200,6 +217,31 @@ export function ChatPanel({
       setInteractions((previous) => previous.filter((entry) => entry.id !== interaction.id))
     } catch (cause) {
       setError(`应答失败：${String(cause)}`)
+    }
+  }
+
+  /**
+   * Ask again with the prompt that produced this answer.
+   *
+   * The transcript keeps both attempts: a retry is a new turn, and hiding the first one would
+   * make "it answered differently that time" unverifiable.
+   */
+  const regenerate = async (index: number) => {
+    for (let at = index; at >= 0; at -= 1) {
+      const candidate = chat.messages[at]
+      if (candidate?.role !== 'user') continue
+      const prompt = candidate.parts.map((part) => part.text).join('\n').trim()
+      if (prompt === '') return
+      setError(null)
+      setSending(true)
+      try {
+        await promptSession(sessionId, prompt)
+      } catch (cause) {
+        setError(String(cause))
+      } finally {
+        setSending(false)
+      }
+      return
     }
   }
 
@@ -275,10 +317,39 @@ export function ChatPanel({
         </div>
       </header>
 
-      <section className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+      <section className="relative min-h-0 flex-1 overflow-y-auto px-6 py-5" onScroll={onScroll}>
         <ol className="flex flex-col gap-5">
           {chat.messages.length === 0 && (
-            <li className="text-muted-foreground animate-fade-up text-sm">发一句话试试。</li>
+            <li className="animate-fade-up flex flex-col items-center gap-4 py-16 text-center">
+              <div className="bg-primary/10 ring-primary/20 flex size-12 items-center justify-center rounded-2xl ring-1">
+                <svg viewBox="0 0 24 24" aria-hidden="true" className="text-primary size-6">
+                  <path
+                    d="M4 6h16M4 12h10M4 18h13"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </div>
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-medium">这个会话还没开始</p>
+                <p className="text-muted-foreground text-xs">
+                  问点什么，或者从下面挑一个 —— 它会真的读代码、跑命令
+                </p>
+              </div>
+              <div className="flex max-w-md flex-wrap justify-center gap-1.5">
+                {STARTING_POINTS.map((point) => (
+                  <button
+                    key={point}
+                    type="button"
+                    onClick={() => setDraft(point)}
+                    className="border-input hover:bg-secondary/50 rounded-full border px-2.5 py-1 text-[11px] transition-colors active:scale-[0.98]"
+                  >
+                    {point}
+                  </button>
+                ))}
+              </div>
+            </li>
           )}
           {chat.messages.map((message, index) => (
             <MessageRow
@@ -286,11 +357,25 @@ export function ChatPanel({
               message={message}
               live={streaming && index === chat.messages.length - 1}
               awaitingApproval={awaiting}
+              onRegenerate={() => void regenerate(index)}
             />
           ))}
         </ol>
         <div ref={bottom} />
       </section>
+
+      {awayFromBottom && (
+        <button
+          type="button"
+          onClick={() => {
+            follow.current = true
+            bottom.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+          }}
+          className="border-border bg-card/90 text-muted-foreground hover:text-foreground animate-pop-in absolute bottom-36 left-1/2 z-10 -translate-x-1/2 rounded-full border px-3 py-1 text-[11px] shadow-lg backdrop-blur transition-colors"
+        >
+          ↓ 回到最新
+        </button>
+      )}
 
       <TodoPanel todos={chat.todos} />
 
@@ -400,6 +485,13 @@ export function ChatPanel({
  * recorded the reason, and the view never looked. A chat that silently swallows a
  * failed turn is worse than one that errors loudly.
  */
+/** Prompts that show what this client can actually do, not generic small talk. */
+const STARTING_POINTS = [
+  '这个仓库是干什么的？先读 README 再回答',
+  '跑一下测试，把失败的那条贴给我',
+  '找出所有调用 kernel_start 的地方',
+]
+
 function FailureBanner({ message }: { message: string }) {
   return (
     <div className="border-destructive/40 bg-destructive/10 rounded-md border p-3">

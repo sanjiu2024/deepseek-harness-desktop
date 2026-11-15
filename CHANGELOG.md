@@ -9,6 +9,32 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Changed — the chat surface stopped being a prototype
+
+Everything here is about the ordinary act of reading an answer, which is where a client feels
+cheap or doesn't.
+
+- **Code blocks** carry their language and a **copy button** that copies the code, not the
+  message. Language is read after mount — computed during render it would say "text" for every
+  block, because the ref is still null on first paint.
+- **Row actions**: copy, and **重试** on a finished answer, which re-sends the prompt that
+  produced it. Both attempts stay in the transcript: a retry is a new turn, and hiding the first
+  one makes "it answered differently that time" unverifiable.
+- **Scrolling follows only when you are already at the bottom.** The old code called
+  `scrollIntoView` on every message, so scrolling up to reread something while the model was
+  answering yanked you back on every chunk. Scrolled away, a **回到最新** pill appears instead.
+- **Sidebar** groups sessions by 今天 / 昨天 / 本周 / 更早 — "yesterday" is how people remember a
+  conversation — shows the time, and has a **filter box** so forty sessions are not a scrolling
+  problem. Empty filter result says so.
+- **Empty state** offers three starting points that show what the client can actually do
+  ("跑一下测试，把失败的那条贴给我"), not generic small talk, and fills the composer rather than
+  sending on the user's behalf.
+
+### Tests
+
+- Front end: 84 passed (3 markdown tests — code copy, links open outside, inline code stays
+  inline; 2 sidebar tests — day buckets, filter with an honest empty state).
+
 ### Added — the model's task list, and searching what was said
 
 - **Todo panel** above the composer. Shape taken from the kernel's own `todo_write` tool

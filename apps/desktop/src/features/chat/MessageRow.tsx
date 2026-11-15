@@ -6,20 +6,25 @@ import { ToolCard } from './ToolCard.tsx'
 /**
  * One conversation turn.
  *
- * Reasoning and answer are different things and are shown as such: a thought is a
- * collapsible trace you can open, not a paragraph of the reply. Blocks render in
- * the order they arrived, so a turn that thinks, calls a tool, then thinks again
- * reads the way it happened.
+ * Reasoning and answer are different things and are shown as such: a thought is a collapsible
+ * trace you can open, not a paragraph of the reply. Blocks render in the order they arrived, so
+ * a turn that thinks, calls a tool, then thinks again reads the way it happened.
+ *
+ * The row carries its own affordances — copy, and for a finished answer, regenerate — because
+ * the two things people do with an answer are take it somewhere and ask again.
  */
 export function MessageRow({
   message,
   live = false,
   awaitingApproval = new Set<string>(),
+  onRegenerate,
 }: {
   message: Message
   live?: boolean
   /** Call ids whose tool call is blocked on a decision the user has not made. */
   awaitingApproval?: ReadonlySet<string>
+  /** Ask again with the same prompt; the transcript keeps both attempts. */
+  onRegenerate?: () => void
 }) {
   const label = message.role === 'user' ? '你' : message.role === 'assistant' ? '助手' : '系统'
   const reasoning = message.parts.filter((part) => part.kind === 'reasoning')
@@ -33,15 +38,26 @@ export function MessageRow({
     return left.seq - right.seq
   })
 
-  // The caret belongs to whatever text is still arriving, which is only ever the
-  // last block of a live turn.
+  // The caret belongs to whatever text is still arriving, which is only ever the last block of
+  // a live turn.
   const streamingIndex = live ? ordered.length - 1 : -1
+  const answer = message.parts
+    .filter((part) => part.kind === 'text')
+    .map((part) => part.text)
+    .join('\n\n')
 
   return (
-    <li className="animate-fade-up flex flex-col gap-2">
-      <span className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-        {label}
-      </span>
+    <li className="animate-fade-up group/row flex flex-col gap-2">
+      <div className="flex items-baseline gap-2">
+        <span className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
+          {label}
+        </span>
+        <RowActions
+          text={answer}
+          canRegenerate={onRegenerate !== undefined && message.role === 'assistant' && !live}
+          onRegenerate={onRegenerate}
+        />
+      </div>
 
       {reasoning.length > 0 && <ReasoningBlock parts={reasoning} live={live && !hasAnswer} />}
 
@@ -69,10 +85,56 @@ export function MessageRow({
   )
 }
 
+/** Copy, and regenerate when there is an answer to regenerate. */
+function RowActions({
+  text,
+  canRegenerate,
+  onRegenerate,
+}: {
+  text: string
+  canRegenerate: boolean
+  onRegenerate: (() => void) | undefined
+}) {
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!copied) return
+    const timer = setTimeout(() => setCopied(false), 1500)
+    return () => clearTimeout(timer)
+  }, [copied])
+
+  if (text === '' && !canRegenerate) return null
+
+  return (
+    <div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100">
+      {text !== '' && (
+        <button
+          type="button"
+          onClick={() => void navigator.clipboard.writeText(text).then(() => setCopied(true))}
+          title="复制这一条"
+          className="text-muted-foreground hover:text-foreground rounded px-1 py-0.5 text-[10px] transition-colors"
+        >
+          {copied ? '已复制' : '复制'}
+        </button>
+      )}
+      {canRegenerate && (
+        <button
+          type="button"
+          onClick={onRegenerate}
+          title="用同样的提示再问一次"
+          className="text-muted-foreground hover:text-foreground rounded px-1 py-0.5 text-[10px] transition-colors"
+        >
+          重试
+        </button>
+      )}
+    </div>
+  )
+}
+
 /**
- * The trace opens itself while the model is thinking and closes once the answer
- * starts — a collapsed disclosure on a live turn looks exactly like no thinking
- * at all. A manual toggle then outranks the streaming state.
+ * The trace opens itself while the model is thinking and closes once the answer starts — a
+ * collapsed disclosure on a live turn looks exactly like no thinking at all. A manual toggle
+ * then outranks the streaming state.
  */
 function ReasoningBlock({ parts, live }: { parts: MessagePart[]; live: boolean }) {
   const [open, setOpen] = useState(live)
