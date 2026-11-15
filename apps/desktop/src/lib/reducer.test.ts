@@ -329,3 +329,41 @@ describe('tool events from a captured run', () => {
     expect(calls.every((call) => call.status === 'ok')).toBe(true)
   })
 })
+
+describe('a failed model call ends the turn', () => {
+  it('clears the running state so the view stops claiming it is generating', () => {
+    // The screenshot case: turn started, the model request timed out, and the
+    // kernel posted the attempt error without a turn/end — the window showed the
+    // failure banner and "generating" at the same time.
+    let state = reduceEvent(emptyChat, event('turn/start', { turn: 1 }))
+    expect(state.active).not.toBeNull()
+
+    state = reduceEvent(state, event('assistant/attempt', {
+      turn: 1,
+      step: 1,
+      stream: [
+        {
+          chunk: {
+            type: 'finish',
+            reason: { kind: 'error', failure: { message: 'Connect Timeout Error (UND_ERR_CONNECT_TIMEOUT)' } },
+          },
+        },
+      ],
+    }))
+
+    expect(state.failure).toContain('CONNECT_TIMEOUT')
+    expect(state.active).toBeNull()
+  })
+
+  it('lets a retry reopen the turn', () => {
+    let state = reduceEvent(emptyChat, event('turn/start', { turn: 1 }))
+    state = reduceEvent(state, event('assistant/attempt', {
+      turn: 1,
+      step: 1,
+      stream: [{ chunk: { type: 'finish', reason: { kind: 'error', failure: { message: 'boom' } } } }],
+    }))
+    state = reduceEvent(state, event('turn/start', { turn: 2 }))
+    expect(state.active).not.toBeNull()
+    expect(state.failure).toBeNull()
+  })
+})

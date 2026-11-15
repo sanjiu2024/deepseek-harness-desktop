@@ -307,7 +307,14 @@ function finalizeAttempt(state: ChatState, event: SessionEvent): ChatState {
     .find((message) => message !== null)
 
   const settled = text === '' ? state : replaceLastAssistant(state, event, text)
-  return failure === undefined || failure === null ? settled : { ...settled, failure }
+  if (failure === undefined || failure === null) return settled
+
+  // A failed attempt ends the turn as far as this view is concerned. Waiting for
+  // `turn/end` looked correct and was wrong: when the failure is the model call
+  // itself — a connect timeout, say — the kernel posted the attempt error and the
+  // window sat on "generating" forever, with the failure text right above it.
+  // A retry reopens the turn with its own `turn/start`.
+  return { ...settled, failure, active: null }
 }
 
 function appendText(

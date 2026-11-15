@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] — 2026-11-15
+
+A failed model call no longer leaves the view claiming it is still generating.
+
+### Fixed
+
+- A terminal failure in `assistant/attempt` now clears the running state. Waiting for
+  `turn/end` was the assumption and it was wrong for exactly the case that matters: when the
+  model request itself fails (a connect timeout), the kernel posted the attempt error and did not
+  close the turn, so the window showed the failure banner **and** "generating" underneath it —
+  two statements that contradict each other. A retry reopens the turn through its own
+  `turn/start`.
+
+### Not a bug
+
+The failure itself was real network trouble (`UND_ERR_CONNECT_TIMEOUT` to the provider's
+Cloudflare addresses) at the moment the proxy client was being restarted. Verified afterwards:
+the same prompt completes both through the proxy and directly.
+
+The kernel does **not** read `HTTPS_PROXY` — a bogus proxy value changes nothing, so the
+machine routes through a TUN device rather than an HTTP proxy. Worth knowing before debugging
+"the client ignores my proxy": it is not the client.
+
+### Verified
+
+- `pnpm --filter @dsh-desktop/app test` → 45 passed (2 new: the failure clears the running
+  state, and a retry reopens the turn).
+
 ## [0.7.1] — 2026-11-15
 
 A blocked tool no longer looks like a slow one.
