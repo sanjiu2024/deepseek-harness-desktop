@@ -194,6 +194,12 @@ impl SessionStore {
       let mut hits = Vec::new();
 
       for path in self.logs()? {
+        // Stop the whole scan once the limit is met: continuing to open and parse the remaining
+        // transcripts cannot change the answer, and the caller asked for a page, not for every
+        // match in the archive.
+        if hits.len() >= limit {
+          break;
+        }
         let Ok((header, events)) = read_session(&path) else {
           continue;
         };
@@ -233,6 +239,7 @@ impl SessionStore {
       }
 
       hits.sort_by_key(|hit| std::cmp::Reverse(hit.time));
+      // (the hit limit is enforced above; this comment marks where the scan stops)
       Ok(hits)
     }
 
@@ -963,5 +970,44 @@ mod trash_tests {
 
         assert!(listed.is_empty());
         assert_eq!(trashed, 0, "purge leaves nothing behind");
+    }
+}
+
+#[cfg(test)]
+mod search_limit_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("dsh-limit-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).ok();
+        root
+    }
+
+    fn write_session(root: &Path, id: &str) {
+        let dir = root.join(SESSIONS_DIR).join("--p--").join(id);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let header = format!(
+            r#"{{"type":"session","version":4,"id":"{id}","createdAt":1,"isSeeded":false,"delegationDepth":0}}"#
+        );
+        let body = format!(
+            r#"{{"type":"user/message","seq":0,"time":10,"data":{{"content":[{{"type":"text","text":"needle {id}"}}]}}}}"#
+        );
+        std::fs::write(dir.join("session.v4.jsonl"), format!("{header}\n{body}")).expect("write");
+    }
+
+    #[test]
+    fn the_limit_is_a_limit_not_a_target() {
+        // Ten sessions, ask for two: the answer is two, and the scan stops there instead of
+        // parsing the other eight for matches it cannot use.
+        let root = scratch("limit");
+        for index in 0..10 {
+            write_session(&root, &format!("s{index}"));
+        }
+
+        let hits = SessionStore::new(&root).search("needle", 2).expect("search");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(hits.len(), 2);
     }
 }

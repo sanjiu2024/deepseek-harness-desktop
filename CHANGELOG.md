@@ -9,6 +9,30 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Performance — terminal output is batched, not streamed raw
+
+`pty://data` used to fire once per `read`, so `cat` of a large file became thousands of JSON
+events — each base64-encoded, each triggering a render. Output now accumulates to 16 KB or 12ms
+and ships as one event. 12ms is the ceiling: a prompt that waits 50ms reads as a broken terminal.
+
+The first implementation flushed whenever a read came back short, which is *exactly wrong*: a
+shell writes line by line, so every read is short, and that produced one event per line — 498
+events for 31 KB, the flooding it was meant to prevent. The test only caught it because it
+counts events, not bytes.
+
+### Performance — search stops when it has enough
+
+`session_search` now breaks out of the whole scan at `limit` instead of parsing every remaining
+transcript for matches it cannot return.
+
+### Verified
+
+```
+cargo test -p dsh-native --release → 10 + 3 pty (new: burst coalescing)
+cargo test -p dsh-store  --release → 26 + 1 real-home (new: the limit is a limit)
+cargo clippy --workspace --all-targets --release -D warnings → clean
+```
+
 ### Fixed — a GBK file no longer previews as garbage
 
 The preview decoded with `from_utf8_lossy` and rejected anything containing a NUL byte. On a

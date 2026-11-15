@@ -81,15 +81,40 @@ impl Pty {
         let reader_closed = Arc::clone(&closed);
         std::thread::spawn(move || {
             let mut buffer = [0u8; 8192];
+            // Coalesce before emitting.
+            //
+            // A raw read loop sends one event per chunk, and `cat` of a 5 MB file becomes
+            // thousands of JSON messages through the WebView — each one base64, each one a
+            // render. Terminals batch for the same reason: the eye cannot see 8 000 updates a
+            // second, and the queue that builds up while the UI is busy is pure latency for
+            // whatever the user typed.
+            let mut pending: Vec<u8> = Vec::with_capacity(FLUSH_BYTES * 2);
+            let mut last_flush = std::time::Instant::now();
+
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => break,
-                    Ok(read) => on_event(PtyEvent::Data(buffer[..read].to_vec())),
+                    Ok(read) => {
+                        pending.extend_from_slice(&buffer[..read]);
+                        // Flush early when the reader is ahead of us, or when enough time has
+                        // passed that a quiet terminal still feels immediate.
+                        // Deliberately NOT flushing on a short read: a shell that writes
+                        // line by line always reads short, and flushing there would send one
+                        // event per line — the exact flooding this is meant to prevent.
+                        if pending.len() >= FLUSH_BYTES || last_flush.elapsed() >= FLUSH_INTERVAL {
+                            on_event(PtyEvent::Data(std::mem::take(&mut pending)));
+                            last_flush = std::time::Instant::now();
+                        }
+                    }
                     Err(_) => break,
                 }
                 if reader_closed.load(Ordering::Relaxed) {
                     break;
                 }
+            }
+            // Whatever was still buffered when the shell exited.
+            if !pending.is_empty() {
+                on_event(PtyEvent::Data(pending));
             }
             on_event(PtyEvent::Exited(None));
         });
@@ -126,6 +151,14 @@ impl Pty {
         self.closed.store(true, Ordering::Relaxed);
     }
 }
+
+/// Flush once this much output has accumulated. 8 KB is one read; two reads in a row from a
+/// fast writer are the case worth coalescing.
+const FLUSH_BYTES: usize = 16 * 1024;
+
+/// Flush at most this late. A terminal that waits 50ms to show a prompt feels broken; this is
+/// short enough to stay imperceptible and long enough to merge a burst.
+const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(12);
 
 /// The shell to start.
 ///
