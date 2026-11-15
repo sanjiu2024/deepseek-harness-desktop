@@ -53,17 +53,18 @@ struct Slot {
 }
 
 /// Kernels by route, started lazily.
+#[derive(Clone)]
 pub struct KernelPool {
     /// How many idle kernels to keep. A running session counts as in use.
     capacity: usize,
-    slots: Mutex<HashMap<Route, Slot>>,
+    slots: Arc<Mutex<HashMap<Route, Slot>>>,
 }
 
 impl KernelPool {
     pub fn new(capacity: usize) -> Self {
         Self {
             capacity: capacity.max(1),
-            slots: Mutex::new(HashMap::new()),
+            slots: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -102,7 +103,31 @@ impl KernelPool {
                 sessions: Vec::new(),
             },
         );
+
+        // A dead kernel must not stay in the pool. Without this, `existing()` keeps handing
+        // out an `Arc` whose process is gone: every call goes into a closed stdin and the
+        // user sees a spinner that never resolves, not an error.
+        self.watch_exit(route.clone(), Arc::clone(&client));
         Ok(client)
+    }
+
+    /// Remove a route when its kernel exits.
+    fn watch_exit(&self, route: Route, client: Arc<KernelClient>) {
+        let pool = self.clone();
+        let mut exited = client.subscribe_exit();
+        tokio::spawn(async move {
+            // A receive error means the sender was dropped, which also means the kernel is
+            // gone; both paths end the same way.
+            let _ = exited.recv().await;
+            tracing::debug!(target: "dsh_runtime", %route, "kernel exited; forgetting it");
+            let mut slots = pool.slots.lock().await;
+            slots.remove(&route);
+        });
+    }
+
+    /// Drop a route without shutting anything down. Used by the exit watcher.
+    pub async fn forget(&self, route: &Route) -> bool {
+        self.slots.lock().await.remove(route).is_some()
     }
 
     /// Record that a session lives on this route, so later prompts find the right kernel.

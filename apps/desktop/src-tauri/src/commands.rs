@@ -197,11 +197,13 @@ pub async fn kernel_call(
     params: serde_json::Value,
     timeout_ms: Option<u64>,
 ) -> Result<serde_json::Value, String> {
+    let route = state.current_route();
     let client = state
         .pool
-        .existing(&state.current_route())
+        .existing(&route)
         .await
         .ok_or_else(|| "the kernel is not running".to_owned())?;
+    ensure_known_session(&state, &client, &route, &method, &params).await;
     let timeout = timeout_ms.map(Duration::from_millis);
     client
         .call(&method, params, timeout)
@@ -629,4 +631,54 @@ pub fn session_search(
     dsh_store::SessionStore::new(&state.dsh_home)
         .search(&query, limit.unwrap_or(40))
         .map_err(|error| error.to_string())
+}
+
+/// Make the kernel aware of a session before it is used.
+///
+/// A session id from the sidebar belongs to a session the *store* has, but a freshly started
+/// kernel has never heard of it: `session/prompt` with an unknown id either fails or creates a
+/// second session under a name that already exists. `session/resume` is the SDK's answer, and
+/// doing it here means the UI does not have to know the difference between "the session I just
+/// created" and "the session I opened from last week".
+///
+/// Only runs for the two methods that take a sessionId, and only once per session per kernel.
+async fn ensure_known_session(
+    state: &AppState,
+    client: &Arc<KernelClient>,
+    route: &Route,
+    method: &str,
+    params: &serde_json::Value,
+) {
+    if method != "session/prompt" && method != "session/query" {
+        return;
+    }
+    let Some(session_id) = params.get("sessionId").and_then(serde_json::Value::as_str) else {
+        return;
+    };
+    if state.pool.route_of(session_id).await.is_some() {
+        return;
+    }
+    if !dsh_store::SessionStore::new(&state.dsh_home).contains(session_id) {
+        // Not on disk: a genuinely new session, which the kernel creates on first prompt.
+        return;
+    }
+
+    let resumed = client
+        .call(
+            "session/resume",
+            serde_json::json!({ "sessionId": session_id }),
+            Some(Duration::from_secs(30)),
+        )
+        .await;
+    match resumed {
+        Ok(_) => {
+            tracing::debug!(target: "dsh_desktop_app", %session_id, "resumed a stored session");
+            state.pool.bind_session(route, session_id).await;
+        }
+        // Resuming is a courtesy, not a gate: if it fails the prompt may still work, and
+        // refusing to send would turn a warning into a broken app.
+        Err(error) => {
+            tracing::warn!(target: "dsh_desktop_app", %session_id, %error, "session/resume failed; prompting anyway");
+        }
+    }
 }

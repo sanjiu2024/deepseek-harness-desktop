@@ -9,6 +9,48 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Fixed — a crashed kernel was invisible to every layer
+
+Nothing was watching the child process. `exited` only ever fired from `shutdown`, so when the
+kernel **died on its own**:
+
+- `kernel://exit` never fired — the "内核崩溃" banner added earlier could not appear;
+- the pool kept the dead route, so every later call went into a closed stdin and the user saw a
+  spinner that never resolved — not an error;
+- nothing in the log said the process was gone.
+
+Now `KernelClient` polls `try_wait` every 200ms (it cannot `wait()` on the same mutex
+`terminate` needs — that would deadlock the kill), reports `{code, requested}`, and the pool
+removes the route. Verified with a fake kernel that exits by itself:
+`a_dead_kernel_leaves_the_pool`.
+
+### Fixed — prompting a session from disk
+
+A session id from the sidebar belongs to the store; a freshly started kernel has never heard of
+it, so `session/prompt` with that id either failed or created a second session under a name that
+already exists. `kernel_call` now issues `session/resume` first when the id exists on disk and
+the kernel does not know it — once per session per kernel, and only for `session/prompt` /
+`session/query`. A failed resume logs a warning and lets the prompt through: resuming is a
+courtesy, not a gate.
+
+`SessionStore::contains` answers the question from headers only — prompting needs it on every
+first message, and parsing a 30 MB transcript to learn "yes" would make reopening slow.
+
+### Added — documented runtime semantics
+
+`docs/接口.md` gained a closing section for the things a UI author must know but cannot see in a
+signature: one kernel per route and why, what happens when a kernel dies, why sessions resume,
+where logs live (with the date suffix nobody guesses), and the `CARGO_TARGET_DIR` workaround for
+a locked build.
+
+### Verified
+
+```
+cargo test -p dsh-runtime --release   → 20 + 2 approval + 2 kernel + 2 pool
+cargo test -p dsh-store  --release   → 19 + 1 real-home
+app launched with autostart          → logs/desktop.log.2026-11-15 written, session_list count=12
+```
+
 ### Added — the engineering around the UI
 
 The window is somebody else's job now; everything a window needs to be *reliable* is here.

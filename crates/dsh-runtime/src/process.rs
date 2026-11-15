@@ -109,8 +109,11 @@ pub struct KernelClient {
     next_id: AtomicU64,
     events: broadcast::Sender<Incoming>,
     stderr_tail: Arc<StdMutex<std::collections::VecDeque<String>>>,
-    child: StdMutex<Option<Child>>,
+    child: Arc<StdMutex<Option<Child>>>,
     exited: broadcast::Sender<ExitStatus>,
+    /// Set by `shutdown`/`terminate` so the exit watcher can tell a requested stop from a
+    /// crash. Without it every death looks the same, and a crash is the one worth reporting.
+    stop_requested: Arc<std::sync::atomic::AtomicBool>,
 }
 
 struct PendingCall {
@@ -151,18 +154,28 @@ impl KernelClient {
             command.env(key, value);
         }
 
-        let mut child = command.spawn().map_err(|source| RuntimeError::Spawn {
+        let child = command.spawn().map_err(|source| RuntimeError::Spawn {
             path: config.entry.to_string_lossy().into_owned(),
             source,
         })?;
 
-        let stdin = child.stdin.take().expect("stdin was piped");
-        let stdout = child.stdout.take().expect("stdout was piped");
-        let stderr = child.stderr.take().expect("stderr was piped");
+        // Shared with the exit watcher: the struct keeps it for `terminate`, the watcher
+        // polls the same handle. Two owners, one process.
+        let child_slot = Arc::new(StdMutex::new(Some(child)));
+        let (stdin, stdout, stderr) = {
+            let mut guard = child_slot.lock().expect("child lock");
+            let child = guard.as_mut().expect("child is present");
+            (
+                child.stdin.take().expect("stdin was piped"),
+                child.stdout.take().expect("stdout was piped"),
+                child.stderr.take().expect("stderr was piped"),
+            )
+        };
 
         let (outbound, mut outbound_rx) = mpsc::unbounded_channel::<String>();
         let (events, _) = broadcast::channel(EVENT_BUFFER);
         let (exited, _) = broadcast::channel(4);
+        let stop_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let pending: Arc<StdMutex<HashMap<u64, PendingCall>>> = Arc::default();
         let stderr_tail = Arc::new(StdMutex::new(std::collections::VecDeque::with_capacity(STDERR_HISTORY)));
 
@@ -179,6 +192,45 @@ impl KernelClient {
             }
             let _ = stdin.shutdown().await;
         });
+
+        // Exit watcher.
+        //
+        // Nothing else waits on the child, so without this a **crash** is invisible: `exited`
+        // would only ever fire from `shutdown`, meaning the pool keeps a dead route, the UI
+        // banner never appears, and a session silently stops working with no error anywhere.
+        //
+        // It polls instead of `wait()`-ing on the mutex because the same mutex is what
+        // `terminate` needs to kill the child — awaiting inside it would deadlock the kill.
+        {
+            let child = Arc::clone(&child_slot);
+            let exited = exited.clone();
+            let stop_requested = Arc::clone(&stop_requested);
+            tokio::spawn(async move {
+                loop {
+                    {
+                        let Ok(mut guard) = child.lock() else { return };
+                        let Some(process) = guard.as_mut() else { return };
+                        match process.try_wait() {
+                            Ok(Some(status)) => {
+                                let _ = exited.send(ExitStatus {
+                                    code: status.code(),
+                                    requested: stop_requested
+                                        .load(std::sync::atomic::Ordering::Relaxed),
+                                });
+                                return;
+                            }
+                            Ok(None) => {}
+                            Err(_) => {
+                                // Nothing more can be learned about this process.
+                                let _ = exited.send(ExitStatus { code: None, requested: false });
+                                return;
+                            }
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+            });
+        }
 
         // Reader: sole owner of stdout.
         {
@@ -267,8 +319,9 @@ impl KernelClient {
             next_id: AtomicU64::new(1),
             events,
             stderr_tail,
-            child: StdMutex::new(Some(child)),
+            child: child_slot,
             exited,
+            stop_requested,
         };
 
         Ok(client)
@@ -371,6 +424,8 @@ impl KernelClient {
     /// Ask the kernel to shut down, then stop waiting for politeness.
     pub async fn shutdown(&self, grace: Duration) {
         let _ = self.call(protocol::method::SHUTDOWN, serde_json::Value::Null, Some(grace)).await;
+        self.stop_requested
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = self.exited.send(ExitStatus { code: None, requested: true });
         self.terminate();
     }
@@ -383,6 +438,8 @@ impl KernelClient {
 
     /// Kill the process if it is still alive. Safe to call twice.
     fn terminate(&self) {
+        self.stop_requested
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         let Ok(mut guard) = self.child.lock() else {
             return;
         };

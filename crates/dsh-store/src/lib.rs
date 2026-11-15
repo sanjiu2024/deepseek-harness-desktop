@@ -234,6 +234,23 @@ impl SessionStore {
       Ok(hits)
     }
 
+    /// Does a session with this id exist on disk?
+    ///
+    /// Reads headers only. Prompting an old session needs this answer on every first message,
+    /// and parsing a 30 MB transcript to learn "yes" would make reopening slow for no reason.
+    pub fn contains(&self, id: &str) -> bool {
+        let Ok(paths) = self.logs() else {
+            return false;
+        };
+        paths.iter().any(|path| {
+            std::fs::read_to_string(path)
+                .ok()
+                .and_then(|raw| raw.lines().next().map(str::to_owned))
+                .and_then(|first| serde_json::from_str::<SessionHeader>(&first).ok())
+                .is_some_and(|header| header.id == id)
+        })
+    }
+
     /// The kernel home this store was opened against.
     pub fn home(&self) -> &Path {
         self.root.parent().unwrap_or(&self.root)
@@ -741,5 +758,31 @@ mod search_tests {
     fn an_empty_query_matches_nothing_rather_than_everything() {
         let store = SessionStore::new(std::env::temp_dir());
         assert!(store.search("   ", 10).expect("search").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod contains_tests {
+    use super::*;
+
+    #[test]
+    fn finds_a_session_by_header_without_reading_the_body() {
+        let root = std::env::temp_dir().join(format!("dsh-contains-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join(SESSIONS_DIR).join("--p--").join("a");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(
+            dir.join("session.v4.jsonl"),
+            r#"{"type":"session","version":4,"id":"a","createdAt":1,"isSeeded":false,"delegationDepth":0}"#,
+        )
+        .expect("write");
+
+        let store = SessionStore::new(&root);
+        let found = store.contains("a");
+        let missing = store.contains("b");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(found);
+        assert!(!missing);
     }
 }

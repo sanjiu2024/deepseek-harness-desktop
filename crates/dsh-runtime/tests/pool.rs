@@ -78,3 +78,43 @@ async fn two_routes_get_two_kernels_and_one_route_is_reused() {
     pool.shutdown_all(Duration::from_secs(5)).await;
     assert!(pool.routes().await.is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dead_kernel_leaves_the_pool() {
+    // A fake kernel that exits on its own: the point is that the pool notices, because a
+    // route whose process is gone must not keep handing out a client whose stdin is closed.
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/exiting-kernel.mjs");
+    let config = KernelConfig {
+        node: "node".into(),
+        entry: fixture,
+        profile: "sdk".into(),
+        patches: vec![],
+        home: std::env::temp_dir(),
+        cwd: std::env::current_dir().expect("cwd"),
+        env: Vec::new(),
+    };
+
+    let pool = KernelPool::new(2);
+    let route = Route::new("fake", "exiting");
+    let spawn = move || {
+        let config = config.clone();
+        async move {
+            KernelClient::spawn(config)
+                .await
+                .map_err(|error| error.to_string())
+        }
+    };
+
+    let _ = pool.acquire(&route, spawn).await.expect("spawn");
+    assert!(pool.existing(&route).await.is_some());
+
+    // The fake exits after 300ms; give the watcher room to run.
+    for _ in 0..40 {
+        if pool.existing(&route).await.is_none() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("the pool still holds a kernel that exited");
+}
