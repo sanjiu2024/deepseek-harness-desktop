@@ -51,6 +51,12 @@ export interface Message {
   seq: number
 }
 
+/** One item of the model's own task list. */
+export interface Todo {
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
 /** What the last completed step cost, as the provider reported it. */
 export interface TokenUsage {
   input: number
@@ -75,6 +81,15 @@ export interface ChatState {
   failure: string | null
   /** Token usage of the most recent step, and the session total. */
   usage: TokenUsage | null
+  /**
+   * The model's task list as of its latest `todo_write` call.
+   *
+   * Whole-list replacement, because that is what the tool is: a snapshot, not a diff. Keeping
+   * history here would show a checklist that no longer matches what the model believes.
+   */
+  todos: Todo[]
+  /** True while the kernel is in plan mode (read-only exploration). */
+  planActive: boolean
 }
 
 export const emptyChat: ChatState = {
@@ -85,6 +100,8 @@ export const emptyChat: ChatState = {
   route: null,
   failure: null,
   usage: null,
+  todos: [],
+  planActive: false,
 }
 
 /**
@@ -105,6 +122,25 @@ export function reduceEvent(state: ChatState, event: SessionEvent): ChatState {
   const next: ChatState = { ...state, lastSeq: event.seq }
 
   switch (event.type) {
+    case 'plan/mode': {
+      // The kernel appends ; anything else is a wire change we do not
+      // understand, and guessing would light up a badge that means nothing.
+      const active = read(event.data, 'active')
+      return typeof active === 'boolean' ? { ...state, planActive: active } : state
+    }
+    case 'todo/write': {
+      const raw = read(event.data, 'todos')
+      if (!Array.isArray(raw)) return state
+      const todos: Todo[] = []
+      for (const item of raw) {
+        const content = asString(read(item, 'content'))
+        const status = asString(read(item, 'status'))
+        if (content === null || status === null) continue
+        if (status !== 'pending' && status !== 'in_progress' && status !== 'completed') continue
+        todos.push({ content, status })
+      }
+      return { ...state, todos }
+    }
     case 'session/title': {
       const title = asString(read(event.data, 'title'))
       return title === null ? next : { ...next, title }

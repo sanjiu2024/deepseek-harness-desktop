@@ -451,3 +451,50 @@ describe('token usage', () => {
     expect(state.usage).toMatchObject({ input: 0, output: 0, cached: 0 })
   })
 })
+
+describe('todo/write', () => {
+  it('takes the list whole — it is a snapshot, not a diff', () => {
+    // The kernel tool appends `todo/write { todos }` per call; keeping history would show a
+    // checklist that no longer matches what the model believes.
+    let state = hydrate([
+      {
+        type: 'todo/write',
+        seq: 0,
+        time: 1,
+        data: {
+          todos: [
+            { content: '读代码', status: 'completed' },
+            { content: '改实现', status: 'in_progress' },
+          ],
+        },
+      },
+    ])
+    state = reduceEvent(state, {
+      type: 'todo/write',
+      seq: 1,
+      time: 2,
+      data: { todos: [{ content: '跑测试', status: 'pending' }] },
+    } as never)
+
+    expect(state.todos).toEqual([{ content: '跑测试', status: 'pending' }])
+  })
+
+  it('drops malformed rows instead of inventing statuses', () => {
+    const state = hydrate([
+      {
+        type: 'todo/write',
+        seq: 0,
+        time: 1,
+        data: {
+          todos: [
+            { content: '好的', status: 'pending' },
+            { content: '没状态' },
+            { content: '奇怪状态', status: 'doing' },
+            'not an object',
+          ],
+        },
+      },
+    ])
+    expect(state.todos).toEqual([{ content: '好的', status: 'pending' }])
+  })
+})

@@ -94,6 +94,19 @@ pub struct SessionHistory {
     pub events: Vec<SessionEvent>,
 }
 
+/// One match inside a session.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHit {
+    pub session_id: String,
+    pub title: String,
+    /// Sequence of the matching event, so the UI can open the session at it later.
+    pub seq: i64,
+    pub time: i64,
+    /// A window of text around the match, trimmed at the edges.
+    pub snippet: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("unreadable session format v{version} at {path}")]
@@ -162,6 +175,63 @@ impl SessionStore {
             }
         }
         Err(fallback.unwrap_or_else(|| StoreError::NotFound(id.to_owned())))
+    }
+
+    /// Search the text of every session for a substring.
+    ///
+    /// Deliberately a scan, not an index. There are tens of sessions, not millions of documents:
+    /// an index would be a second thing to keep in sync with files the kernel writes behind our
+    /// back, and it would go stale the moment a session is deleted. If this ever gets slow, the
+    /// fix is an index **built from** these logs, not a different source of truth.
+    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, StoreError> {
+      let needle = query.trim().to_lowercase();
+      if needle.is_empty() {
+        return Ok(Vec::new());
+      }
+      let titles = SessionTitles::load(self.home());
+      let mut hits = Vec::new();
+
+      for path in self.logs()? {
+        let Ok((header, events)) = read_session(&path) else {
+          continue;
+        };
+        let title = titles
+          .get(&header.id)
+          .map(str::to_owned)
+          .unwrap_or_else(|| summarize(&header, &events).title);
+
+        for event in &events {
+          if hits.len() >= limit {
+            break;
+          }
+          let text = match event.kind.as_str() {
+            // The user's own words and the model's answer. Tool traffic is machine text:
+            // matching it would surface a session because a path happens to contain the term.
+            "user/message" => content_text(&event.data),
+            "assistant/message" => event
+              .data
+              .get("message")
+              .and_then(content_text)
+              .or_else(|| content_text(&event.data)),
+            _ => None,
+          };
+          let Some(text) = text else {
+            continue;
+          };
+          if let Some(snippet) = snippet_around(&text, &needle) {
+            hits.push(SearchHit {
+              session_id: header.id.clone(),
+              title: title.clone(),
+              seq: event.seq,
+              time: event.time,
+              snippet,
+            });
+          }
+        }
+      }
+
+      hits.sort_by_key(|hit| std::cmp::Reverse(hit.time));
+      Ok(hits)
     }
 
     /// The kernel home this store was opened against.
@@ -350,6 +420,33 @@ fn content_text(data: &serde_json::Value) -> Option<String> {
         .filter_map(|block| block.get("text").and_then(serde_json::Value::as_str))
         .collect();
     (!joined.is_empty()).then_some(joined)
+}
+
+/// A readable window around the first case-insensitive occurrence of `needle`.
+///
+/// The window is character-based, not byte-based: slicing bytes at a fixed offset would cut a
+/// multi-byte character in half and produce a replacement glyph in the middle of Chinese text.
+fn snippet_around(text: &str, needle: &str) -> Option<String> {
+    let lowered = text.to_lowercase();
+    let at = lowered.find(needle)?;
+    // Byte offset in the lowered string is not the byte offset in the original when lowercase
+    // changes length (rare, but 'İ' does). Fall back to the flattened text in that case.
+    let source: Vec<char> = if lowered.len() == text.len() {
+        text.chars().collect()
+    } else {
+        lowered.chars().collect()
+    };
+    let index = lowered[..at].chars().count();
+    let start = index.saturating_sub(24);
+    let end = (index + needle.chars().count() + 48).min(source.len());
+    let mut window: String = source[start..end].iter().collect();
+    if start > 0 {
+        window.insert(0, '…');
+    }
+    if end < source.len() {
+        window.push('…');
+    }
+    Some(window.replace('\n', " "))
 }
 
 fn shorten(text: &str, limit: usize) -> String {
@@ -558,5 +655,91 @@ mod rename_tests {
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(listed[0].parent_id.as_deref(), Some("parent"));
         assert!(listed[0].is_subagent);
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("dsh-search-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).ok();
+        root
+    }
+
+    fn write_session(root: &Path, id: &str, lines: &[&str]) {
+        let dir = root.join(SESSIONS_DIR).join("--p--").join(id);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("session.v4.jsonl"), lines.join("\n")).expect("write");
+    }
+
+    #[test]
+    fn finds_text_in_the_users_words_and_the_answer() {
+        let root = scratch("hit");
+        write_session(
+            &root,
+            "a",
+            &[
+                r#"{"type":"session","version":4,"id":"a","createdAt":1,"isSeeded":false,"delegationDepth":0}"#,
+                r#"{"type":"user/message","seq":0,"time":10,"data":{"source":{"kind":"user"},"content":[{"type":"text","text":"怎么配置 Tauri 的窗口"}]}}"#,
+                r#"{"type":"assistant/message","seq":1,"time":11,"data":{"message":{"content":[{"type":"text","text":"在 tauri.conf.json 里改"}]}}}"#,
+            ],
+        );
+
+        let hits = SessionStore::new(&root).search("tauri", 10).expect("search");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(hits.len(), 2, "both sides of the conversation are searchable");
+        assert!(hits.iter().all(|hit| hit.session_id == "a"));
+    }
+
+    #[test]
+    fn ignores_tool_traffic() {
+        // A path containing the term is not a conversation about the term.
+        let root = scratch("tools");
+        write_session(
+            &root,
+            "a",
+            &[
+                r#"{"type":"session","version":4,"id":"a","createdAt":1,"isSeeded":false,"delegationDepth":0}"#,
+                r#"{"type":"tool/call","seq":0,"time":10,"data":{"name":"pwsh","arguments":"{\"command\":\"ls tauri\"}"}}"#,
+            ],
+        );
+
+        let hits = SessionStore::new(&root).search("tauri", 10).expect("search");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn a_snippet_never_splits_a_character() {
+        let root = scratch("utf8");
+        let body = "前".repeat(60) + "关键字" + &"后".repeat(60);
+        write_session(
+            &root,
+            "a",
+            &[
+                r#"{"type":"session","version":4,"id":"a","createdAt":1,"isSeeded":false,"delegationDepth":0}"#,
+                &format!(
+                    r#"{{"type":"user/message","seq":0,"time":10,"data":{{"content":[{{"type":"text","text":"{body}"}}]}}}}"#
+                ),
+            ],
+        );
+
+        let hits = SessionStore::new(&root).search("关键字", 10).expect("search");
+        let _ = std::fs::remove_dir_all(&root);
+
+        let snippet = &hits[0].snippet;
+        assert!(snippet.contains("关键字"));
+        assert!(!snippet.contains('\u{fffd}'), "no replacement characters: {snippet}");
+        assert!(snippet.starts_with('…') && snippet.ends_with('…'));
+    }
+
+    #[test]
+    fn an_empty_query_matches_nothing_rather_than_everything() {
+        let store = SessionStore::new(std::env::temp_dir());
+        assert!(store.search("   ", 10).expect("search").is_empty());
     }
 }

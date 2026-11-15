@@ -9,6 +9,32 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Added — the model's task list, and searching what was said
+
+- **Todo panel** above the composer. Shape taken from the kernel's own `todo_write` tool
+  (`append("todo/write", { todos })`, statuses `pending | in_progress | completed`, at most one
+  in progress) — read from the source, not guessed. Taken as a **whole list** per event, because
+  that is what the tool is; keeping history would show a checklist the model does not believe.
+  Malformed rows are dropped rather than given an invented status. All-done collapses to one line.
+- **Plan-mode badge**, folded from `plan/mode { active }`.
+- **Content search** across every stored session: `session_search` in `dsh-store` scans the
+  user's words and the model's answers, **skipping tool traffic** (a path containing the term is
+  not a conversation about it). Snippets are character-based windows, so a match in Chinese is
+  never split mid-character. The palette shows hits under "内容" once the query is two characters
+  and typing settles; one keystroke is never a question about the archive.
+
+### Deliberately not done
+
+- **Goal panel.** `goal/change` is a versioned snapshot protocol with its own decode and
+  validation; a panel for it would cost more than it returns right now. Recorded in
+  `docs/状态.md` as partial rather than quietly skipped.
+
+### Tests
+
+- `dsh-store`: 4 new search tests (both sides of the conversation, tool traffic ignored,
+  no split characters, empty query matches nothing) → 18 total.
+- Front end: 79 passed (2 new content-search tests).
+
 ### Added — the kernel lost 383 MB without losing a feature
 
 - `pnpm kernel:slim` finds the packages the SDK profile never loads and proves each removal by

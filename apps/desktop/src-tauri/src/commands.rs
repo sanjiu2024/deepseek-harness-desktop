@@ -432,6 +432,7 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         kernel_diagnostics,
         session_list,
         session_load,
+        session_search,
         settings_get,
         settings_set,
         session_rename,
@@ -535,4 +536,16 @@ pub async fn kernel_route_switch(
 pub struct RouteSwitched {
     pub provider: String,
     pub model: String,
+}
+
+/// Search the text of every stored session.
+#[tauri::command]
+pub fn session_search(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<dsh_store::SearchHit>, String> {
+    dsh_store::SessionStore::new(&state.dsh_home)
+        .search(&query, limit.unwrap_or(40))
+        .map_err(|error| error.to_string())
 }

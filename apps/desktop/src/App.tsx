@@ -109,6 +109,14 @@ export function App() {
           actions={actions}
           onClose={() => setPaletteOpen(false)}
           onSelectSession={open}
+          onOpenSession={(id) => {
+            const known = sessions.find((session) => session.id === id)
+            if (known) open(known)
+            else {
+              setSessionId(id)
+              setHistoryKey((key) => key + 1)
+            }
+          }}
         />
       )}
     </div>

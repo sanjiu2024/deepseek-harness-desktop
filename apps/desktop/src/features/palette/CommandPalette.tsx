@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ipc, type SessionSummary } from '@/lib/ipc.ts'
+import { ipc, type SearchHit, type SessionSummary } from '@/lib/ipc.ts'
 
 /**
  * Commands reachable without the mouse.
@@ -20,14 +20,41 @@ export function CommandPalette({
   actions,
   onClose,
   onSelectSession,
+  onOpenSession,
 }: {
   sessions: SessionSummary[]
   actions: PaletteAction[]
   onClose: () => void
   onSelectSession: (session: SessionSummary) => void
+  /** Open a session by id, used by content hits. */
+  onOpenSession: (sessionId: string) => void
 }) {
   const [query, setQuery] = useState('')
   const [cursor, setCursor] = useState(0)
+  const [searchHits, setSearchHits] = useState<SearchHit[]>([])
+
+  // Content search is a scan over every session log, so it waits for two characters and for
+  // typing to settle: one keystroke is never a question about the archive.
+  useEffect(() => {
+    const needle = query.trim()
+    if (needle.length < 2) {
+      setSearchHits([])
+      return
+    }
+    let cancelled = false
+    const timer = setTimeout(() => {
+      void ipc
+        .sessionSearch(needle)
+        .then((hits) => {
+          if (!cancelled) setSearchHits(hits)
+        })
+        .catch(() => {})
+    }, 200)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [query])
   const input = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -49,8 +76,16 @@ export function CommandPalette({
         hint: '会话',
         run: () => onSelectSession(session),
       }))
-    return [...matchedActions, ...matchedSessions]
-  }, [actions, onSelectSession, query, sessions])
+    const matchedContent = searchHits
+      .slice(0, 8)
+      .map<PaletteAction>((hit) => ({
+        id: `content-${hit.sessionId}-${hit.seq}`,
+        label: hit.snippet,
+        hint: hit.title,
+        run: () => onOpenSession(hit.sessionId),
+      }))
+    return [...matchedActions, ...matchedSessions, ...matchedContent]
+  }, [actions, onOpenSession, onSelectSession, query, searchHits, sessions])
 
   useEffect(() => {
     setCursor(0)

@@ -26,6 +26,7 @@ import {
 } from '@/lib/interaction.ts'
 import { InteractionHost } from './InteractionHost.tsx'
 import { SettingsDialog } from '@/features/settings/SettingsDialog.tsx'
+import { TodoPanel } from './TodoPanel.tsx'
 import { MessageRow } from './MessageRow.tsx'
 
 /**
@@ -229,6 +230,11 @@ export function ChatPanel({
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {chat.planActive && (
+            <span className="rounded-full bg-sky-400/15 px-2 py-0.5 text-[10px] text-sky-300">
+              计划模式
+            </span>
+          )}
           {chat.usage !== null && (
             <span
               className="text-muted-foreground font-mono text-[10px] tabular-nums"
@@ -285,6 +291,8 @@ export function ChatPanel({
         </ol>
         <div ref={bottom} />
       </section>
+
+      <TodoPanel todos={chat.todos} />
 
       {chat.failure !== null && (
         <div className="mx-6 mb-2">

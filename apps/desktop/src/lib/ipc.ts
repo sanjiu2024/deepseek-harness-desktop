@@ -101,6 +101,15 @@ export interface TreeEntry {
   modified: number | null
 }
 
+/** One match inside a session. */
+export interface SearchHit {
+  sessionId: string
+  title: string
+  seq: number
+  time: number
+  snippet: string
+}
+
 export const ipc = {
   appInfo: (): Promise<AppInfo> => invoke<AppInfo>('app_info'),
   kernelPaths: (): Promise<KernelPaths> => invoke<KernelPaths>('kernel_paths'),
@@ -130,6 +139,9 @@ export const ipc = {
   ptyClose: (id: string): Promise<void> => invoke<void>('pty_close', { id }),
   sessionList: (): Promise<SessionSummary[]> => invoke<SessionSummary[]>('session_list'),
   sessionLoad: (id: string): Promise<SessionHistory> => invoke<SessionHistory>('session_load', { id }),
+  /** Full-text search across stored sessions; a scan, not an index. */
+  sessionSearch: (query: string, limit?: number): Promise<SearchHit[]> =>
+    invoke<SearchHit[]>('session_search', { query, limit }),
   sessionRename: (id: string, title: string): Promise<void> =>
     invoke<void>('session_rename', { id, title }),
   sessionDelete: (id: string): Promise<void> => invoke<void>('session_delete', { id }),
