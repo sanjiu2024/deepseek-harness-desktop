@@ -59,12 +59,38 @@ export interface InitializeOptions {
   reasoningEffort?: string
 }
 
+/** One row in the session sidebar, read from the kernel's own log store. */
+export interface SessionSummary {
+  id: string
+  title: string
+  cwd: string | null
+  createdAt: number
+  updatedAt: number
+  eventCount: number
+  isSubagent: boolean
+}
+
+/** The event row shape as it appears on disk. */
+export interface StoredEvent {
+  type: string
+  seq: number
+  time: number
+  data: unknown
+}
+
+export interface SessionHistory {
+  header: { id: string; cwd?: string; createdAt: number }
+  events: StoredEvent[]
+}
+
 export const ipc = {
   appInfo: (): Promise<AppInfo> => invoke<AppInfo>('app_info'),
   kernelPaths: (): Promise<KernelPaths> => invoke<KernelPaths>('kernel_paths'),
   kernelStart: (): Promise<void> => invoke<void>('kernel_start'),
   kernelStop: (): Promise<void> => invoke<void>('kernel_stop'),
   kernelDiagnostics: (): Promise<string[]> => invoke<string[]>('kernel_diagnostics'),
+  sessionList: (): Promise<SessionSummary[]> => invoke<SessionSummary[]>('session_list'),
+  sessionLoad: (id: string): Promise<SessionHistory> => invoke<SessionHistory>('session_load', { id }),
   kernelInitialize: (options: InitializeOptions): Promise<unknown> =>
     invoke<unknown>('kernel_initialize', {
       cwd: options.cwd,

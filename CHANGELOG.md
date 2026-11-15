@@ -4,6 +4,61 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] — 2026-11-15
+
+Conversations survive a restart now: the client reads the kernel's own session store.
+
+### Added — history is a product feature
+
+- `crates/dsh-store` is implemented (it was a doc-comment stub until now): it walks
+  `<dsh_home>/sessions/<project>/<session>/`, picks the newest plain-JSONL generation per
+  session, parses the header and the durable rows, and answers two questions — *what exists*
+  and *what happened*. Unreadable entries are skipped, never fatal: one corrupt log must not
+  hide the other fifty.
+- `session_list` / `session_load` Tauri commands, and `hydrate()` in the reducer. Opening a
+  session replays its durable rows **through the same reducer as a live turn**, so history and
+  streaming cannot disagree about what a tool call or a reasoning block looks like.
+- `SessionSidebar`: what has happened, next to what is happening. Titles come from
+  `session/title` or, failing that, the user's own first message — the four injected
+  `<system-reminder>` blocks are explicitly not titles. Subagent sessions are tagged so a child
+  run is not mistaken for a conversation. Times are relative, counts are visible, and an empty
+  store says so instead of looking broken.
+- `crates/dsh-store/tests/real_home.rs` — reads an actual installation when
+  `DSH_DESKTOP_HOME` is set, so the parser can be checked against real files in one command
+  rather than only against fixtures.
+
+### Verified against the real store
+
+```
+$ DSH_DESKTOP_HOME=…/.dev-home cargo test -p dsh-store --test real_home -- --nocapture
+sessions found: 12
+  8e32f9e2-… · 用 pwsh 往 D:\dsh-test.txt 写一行 · 29 events · updated …
+loaded 29 events from 8e32f9e2-…
+```
+
+And in the running release build, launched without a click
+(`DSH_DESKTOP_AUTOSTART=1`, log redirected):
+
+```
+DEBUG dsh_desktop_app: kernel_initialize ok value=…
+DEBUG dsh_desktop_app: session_list count=12
+```
+
+The sidebar mounted, called the command, and got twelve rows back from the directory the kernel
+has been writing to all along.
+
+### Fixed along the way
+
+- A release build had been embedding a **stale front end**: `cargo build` does not notice that
+  `dist/` changed, so the binary shipped whatever the last compile saw. Rebuilding the front end
+  now has to be followed by touching a Rust source file — recorded here because it cost a
+  debugging round that looked like "the sidebar never mounts".
+
+### Tests
+
+- Front end: 60 passed (5 new sidebar tests, 2 new hydrate tests).
+- Rust: 16 runtime unit + 2 kernel integration + 2 approval round trip + 5 store + 1 real-home.
+
 ## [0.11.0] — 2026-11-15
 
 The release build actually ships a front end now, and the whole chain is verified without a click.

@@ -5,6 +5,7 @@ const ipcAnswer = (id: FrameId, result: unknown) => ipc.kernelAnswer(id, result)
 import {
   applyLiveChunk,
   emptyChat,
+  hydrate,
   reduceEvent,
   type ChatState,
   type SessionEvent,
@@ -26,7 +27,14 @@ import { MessageRow } from './MessageRow.tsx'
  * Those arrive once the event shapes below are confirmed against a live kernel
  * rather than guessed from the protocol docs.
  */
-export function ChatPanel({ sessionId }: { sessionId: string }) {
+export function ChatPanel({
+  sessionId,
+  onActivity,
+}: {
+  sessionId: string
+  /** Called when this session first produces something worth listing. */
+  onActivity?: () => void
+}) {
   const [chat, setChat] = useState<ChatState>(emptyChat)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -40,6 +48,25 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
   // reached the client; if it counts up, the dialog has a rendering problem.
   const [requestCounts, setRequestCounts] = useState<Record<string, number>>({})
   const bottom = useRef<HTMLDivElement>(null)
+
+  // A session that already exists on disk is opened, not replayed: its durable
+  // rows go through the same reducer as a live turn, so history and streaming
+  // cannot disagree about what a tool call or a reasoning block looks like.
+  useEffect(() => {
+    let cancelled = false
+    void ipc
+      .sessionLoad(sessionId)
+      .then((history) => {
+        if (cancelled || history.events.length === 0) return
+        setChat(hydrate(history.events))
+      })
+      .catch(() => {
+        // No stored log yet: this is a new session, which is not an error.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [sessionId])
 
   useEffect(() => {
     let off: (() => void) | undefined
@@ -81,6 +108,7 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
       }
       // A turn that ended cannot still be waiting on us: any queued decision
       // belongs to a tool call the kernel has already abandoned.
+      if (event.type === 'turn/start') onActivity?.()
       if (event.type === 'turn/end') setInteractions([])
       setChat((state) => reduceEvent(state, event))
     }).then((unlisten) => {

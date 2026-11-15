@@ -134,10 +134,14 @@ pub async fn kernel_initialize(
         params["reasoningEffort"] = serde_json::Value::String(effort);
     }
 
-    client
+    let result = client
         .initialize(params, Duration::from_secs(30))
-        .await
-        .map_err(|error| error.to_string())
+        .await;
+    match &result {
+        Ok(value) => tracing::debug!(target: "dsh_desktop_app", ?value, "kernel_initialize ok"),
+        Err(error) => tracing::warn!(target: "dsh_desktop_app", %error, "kernel_initialize failed"),
+    }
+    result.map_err(|error| error.to_string())
 }
 
 /// Call any SDK method.
@@ -289,6 +293,32 @@ fn trace_frame(app: &AppHandle, value: &serde_json::Value) {
     }
 }
 
+/// Every session on disk, newest first.
+///
+/// The kernel keeps no index and exposes no "list" call, so this reads the store
+/// the kernel is already writing. A session the kernel has never flushed simply is
+/// not listed; nothing here can corrupt one.
+#[tauri::command]
+pub fn session_list(state: State<'_, AppState>) -> Result<Vec<dsh_store::SessionSummary>, String> {
+    let listed = dsh_store::SessionStore::new(&state.dsh_home).list();
+    match &listed {
+        Ok(sessions) => tracing::debug!(target: "dsh_desktop_app", count = sessions.len(), "session_list"),
+        Err(error) => tracing::warn!(target: "dsh_desktop_app", %error, "session_list failed"),
+    }
+    listed.map_err(|error| error.to_string())
+}
+
+/// One session's full history, for opening it in the view.
+#[tauri::command]
+pub fn session_load(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<dsh_store::SessionHistory, String> {
+    dsh_store::SessionStore::new(&state.dsh_home)
+        .load(&id)
+        .map_err(|error| error.to_string())
+}
+
 /// Re-exported so `main.rs` can register everything in one list.
 pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
@@ -299,6 +329,8 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         kernel_call,
         kernel_answer,
         kernel_diagnostics,
+        session_list,
+        session_load,
         kernel_stop,
     ]
 }

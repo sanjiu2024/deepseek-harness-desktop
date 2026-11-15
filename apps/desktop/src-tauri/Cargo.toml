@@ -29,6 +29,7 @@ tracing-subscriber.workspace = true
 tokio.workspace = true
 
 dsh-runtime = { path = "../../../crates/dsh-runtime" }
+dsh-store = { path = "../../../crates/dsh-store" }
 
 # Without `custom-protocol`, a release build has no embedded front end: the window
 # opens blank and no command ever reaches Rust. Tauri's own template ships this;

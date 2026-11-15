@@ -158,6 +158,17 @@ export function reduceEvent(state: ChatState, event: SessionEvent): ChatState {
   }
 }
 
+/**
+ * Rebuild a conversation from a stored log.
+ *
+ * Opening a session is the same operation as watching one: the durable rows are
+ * replayed through the same reducer, so a loaded history and a live turn cannot
+ * disagree about a tool call or a reasoning block.
+ */
+export function hydrate(events: readonly SessionEvent[]): ChatState {
+  return reduceEvents(emptyChat, events)
+}
+
 /** Fold a batch. Idempotent, and later events win. */
 export function reduceEvents(state: ChatState, events: readonly SessionEvent[]): ChatState {
   return events.reduce(reduceEvent, state)

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   applyLiveChunk,
   emptyChat,
+  hydrate,
   reduceEvent,
   reduceEvents,
   type ChatState,
@@ -396,5 +397,34 @@ describe('arrival order', () => {
     state = applyLiveChunk(state, { type: 'reasoning-delta', index: 0, text: 'a' })
     state = applyLiveChunk(state, { type: 'reasoning-delta', index: 0, text: 'b' })
     expect(state.messages[0]?.parts).toHaveLength(1)
+  })
+})
+
+describe('hydrate', () => {
+  it('rebuilds a conversation from a stored log', () => {
+    // Opening a session replays durable rows through the same reducer as a live
+    // turn, so history and streaming cannot disagree.
+    const stored = [
+      { type: 'user/message', seq: 0, time: 10, data: { id: 'u1', source: { kind: 'user' }, content: [{ type: 'text', text: '旧的问题' }] } },
+      { type: 'assistant/message', seq: 1, time: 20, data: { message: { role: 'assistant', content: [{ type: 'reasoning', text: '想过' }, { type: 'text', text: '旧的回答' }] } } },
+      { type: 'tool/call', seq: 2, time: 30, data: { callId: 'c1', name: 'pwsh', arguments: '{"command":"ls"}' } },
+      { type: 'tool/result', seq: 3, time: 40, data: { message: { toolCallId: 'c1', content: [{ type: 'text', text: 'file.txt' }] } } },
+    ]
+
+    const state = hydrate(stored)
+
+    expect(state.messages).toHaveLength(2)
+    expect(state.messages[0]?.parts[0]?.text).toBe('旧的问题')
+    expect(state.messages[1]?.parts.map((part) => part.kind)).toEqual(['reasoning', 'text'])
+    expect(state.messages[1]?.tools[0]).toMatchObject({ name: 'pwsh', status: 'ok', output: 'file.txt' })
+    expect(state.lastSeq).toBe(3)
+  })
+
+  it('takes the title from the stored log', () => {
+    const state = hydrate([
+      { type: 'session/title', seq: 0, time: 1, data: { title: '旧会话' } },
+      { type: 'user/message', seq: 1, time: 2, data: { id: 'u', content: 'q' } },
+    ])
+    expect(state.title).toBe('旧会话')
   })
 })
