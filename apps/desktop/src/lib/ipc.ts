@@ -92,6 +92,15 @@ export interface SettingsSnapshot {
   hasCredential: boolean
 }
 
+/** One row of the workspace tree. */
+export interface TreeEntry {
+  name: string
+  path: string
+  kind: 'file' | 'directory' | 'symlink'
+  size: number | null
+  modified: number | null
+}
+
 export const ipc = {
   appInfo: (): Promise<AppInfo> => invoke<AppInfo>('app_info'),
   kernelPaths: (): Promise<KernelPaths> => invoke<KernelPaths>('kernel_paths'),
@@ -109,6 +118,16 @@ export const ipc = {
   settingsGet: (): Promise<SettingsSnapshot> => invoke<SettingsSnapshot>('settings_get'),
   settingsSet: (provider: string, model: string): Promise<SettingsSnapshot> =>
     invoke<SettingsSnapshot>('settings_set', { provider, model }),
+  fsTree: (path: string | null, showNoisy = false): Promise<TreeEntry[]> =>
+    invoke<TreeEntry[]>('fs_tree', { path, showNoisy }),
+  fsRead: (path: string, maxBytes?: number): Promise<string> =>
+    invoke<string>('fs_read', { path, maxBytes }),
+  ptyOpen: (id: string, rows: number, cols: number): Promise<{ id: string; shell: string }> =>
+    invoke<{ id: string; shell: string }>('pty_open', { id, rows, cols }),
+  ptyWrite: (id: string, data: string): Promise<void> => invoke<void>('pty_write', { id, data }),
+  ptyResize: (id: string, rows: number, cols: number): Promise<void> =>
+    invoke<void>('pty_resize', { id, rows, cols }),
+  ptyClose: (id: string): Promise<void> => invoke<void>('pty_close', { id }),
   sessionList: (): Promise<SessionSummary[]> => invoke<SessionSummary[]>('session_list'),
   sessionLoad: (id: string): Promise<SessionHistory> => invoke<SessionHistory>('session_load', { id }),
   sessionRename: (id: string, title: string): Promise<void> =>
@@ -156,4 +175,17 @@ export function promptSession(sessionId: string, text: string): Promise<{ messag
     sessionId,
     contentBlocks: [{ type: 'text', text }],
   })
+}
+
+/** Terminal output. Base64 because a Tauri event is JSON, and xterm wants bytes. */
+export function onPtyData(
+  handler: (payload: { id: string; data: string }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ id: string; data: string }>('pty://data', (event) => handler(event.payload))
+}
+
+export function onPtyExit(
+  handler: (payload: { id: string; code: number | null }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ id: string; code: number | null }>('pty://exit', (event) => handler(event.payload))
 }

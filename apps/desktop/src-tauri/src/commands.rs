@@ -439,6 +439,12 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         session_export,
         session_export_to,
         kernel_stop,
+        crate::workspace::pty_open,
+        crate::workspace::pty_write,
+        crate::workspace::pty_resize,
+        crate::workspace::pty_close,
+        crate::workspace::fs_tree,
+        crate::workspace::fs_read,
         kernel_route_switch,
     ]
 }

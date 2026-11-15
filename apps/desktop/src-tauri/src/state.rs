@@ -106,6 +106,8 @@ pub struct AppState {
     pub kernel_dir: PathBuf,
     /// The kernel-side live bridge source, copied into the kernel home at start.
     pub bridge_dir: PathBuf,
+    /// Root of the tree the side panel browses. The app never reads outside it.
+    pub workspace: PathBuf,
     /// One kernel per route. See `dsh_runtime::pool` for why a route needs its own process.
     pub pool: KernelPool,
     /// Routes whose frame readers are already attached, so a reused kernel does not get a
@@ -140,6 +142,7 @@ impl AppState {
             .unwrap_or(3);
 
         Self {
+            workspace: std::env::current_dir().unwrap_or_else(|_| home.clone()),
             dsh_home: home.clone(),
             kernel_dir,
             bridge_dir,

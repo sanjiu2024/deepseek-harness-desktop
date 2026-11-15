@@ -39,12 +39,17 @@ export function ChatPanel({
   sessionId,
   onActivity,
   onToggleTheme,
+  pendingPath,
+  onPathConsumed,
 }: {
   sessionId: string
   /** Called when this session first produces something worth listing. */
   onActivity?: () => void
   /** Flips the theme; the palette offers the same action by name. */
   onToggleTheme?: () => void
+  /** A path the file tree asked to put in the composer. */
+  pendingPath?: string | null
+  onPathConsumed?: () => void
 }) {
   const [chat, setChat] = useState<ChatState>(emptyChat)
   const [draft, setDraft] = useState('')
@@ -53,6 +58,16 @@ export function ChatPanel({
   const [settings, setSettings] = useState<SettingsSnapshot | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+
+  // A path chosen in the file tree lands in the composer, where the user can wrap it in a
+  // sentence. Inserting it into the last message would be inventing a request they did not make.
+  useEffect(() => {
+    if (!pendingPath) return
+    setDraft((current) =>
+      current.includes(pendingPath) ? current : `${current} ${pendingPath}`.trimStart(),
+    )
+    onPathConsumed?.()
+  }, [pendingPath, onPathConsumed])
 
   // notice timer: a transient message should not become furniture.
   useEffect(() => {

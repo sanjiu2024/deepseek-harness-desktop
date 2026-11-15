@@ -2,6 +2,7 @@
 //! everything with behaviour lives in `crates/`. See AGENTS.md, "Where code goes".
 
 mod commands;
+mod workspace;
 mod state;
 
 use std::process::ExitCode;
@@ -62,6 +63,7 @@ fn main() -> ExitCode {
             let data_dir = data_dir.clone();
             move |app| {
                 app.manage(AppState::resolve(data_dir));
+                app.manage(workspace::Terminals::default());
                 Ok(())
             }
         })

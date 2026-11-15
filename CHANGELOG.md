@@ -9,6 +9,40 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Added — a workspace panel: files and a real shell
+
+- `crates/dsh-native` stops being a stub. `tree` lists **one directory per call** and refuses
+  any path outside the workspace (canonicalised first, so `a/../../etc` cannot slip through);
+  `pty` is a real pseudo-terminal, not a command runner.
+- Panel on the right (`Ctrl/Cmd+J`): file tree with click-to-preview and **插入路径**, which
+  puts a path in the composer rather than inventing a message.
+- Terminal via `portable-pty` + xterm.js. Output crosses the Tauri boundary as **base64** and is
+  decoded to bytes in the front end: a UTF-8 sequence splits across reads, and decoding chunk by
+  chunk would put replacement characters in the middle of Chinese output.
+- The shell is resolved, not assumed: `pwsh` → `powershell` → `cmd`. Hard-coding `pwsh` fails
+  on every machine that only has Windows PowerShell, with an error that reads like our bug.
+
+### Two things the terminal taught us
+
+- **PowerShell blocks on `ESC[6n`** (cursor position report) and paints nothing until it gets an
+  answer. A bare pipe looks hung; a real emulator answers and the prompt appears. The PTY test
+  had to answer it by hand — documented where it happens, because "the shell hangs" is a
+  misleading symptom.
+- The reader thread emits `Vec<u8>`, never `String`, for the reason above.
+
+### Verified
+
+```
+$ cargo test -p dsh-native --release
+test result: ok. 5 passed          # tree: noise, escape, preview, size cap
+$ cargo test -p dsh-native --release --test pty_smoke
+test result: ok. 2 passed (1.48s)  # a real shell echoed DSH-PTY-OK; resize works
+```
+
+Front end: 75 passed (4 new file-tree tests). The click-through in the window was **not**
+automated — keyboard injection needs an approval this session does not grant — so the terminal
+is proven at the PTY layer and by the app starting, not by a screenshot.
+
 ### Added — more than one model at a time
 
 - **Kernel pool** (`crates/dsh-runtime/src/pool.rs`): one kernel per route, started lazily,

@@ -3,6 +3,7 @@ import { BootPanel } from '@/features/boot/BootPanel.tsx'
 import { ChatPanel } from '@/features/chat/ChatPanel.tsx'
 import { SessionSidebar } from '@/features/sessions/SessionSidebar.tsx'
 import { CommandPalette, type PaletteAction } from '@/features/palette/CommandPalette.tsx'
+import { WorkspacePanel } from '@/features/workspace/WorkspacePanel.tsx'
 import { useTheme } from '@/lib/theme.ts'
 import { ipc, type SessionSummary } from '@/lib/ipc.ts'
 
@@ -20,6 +21,9 @@ export function App() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [panelOpen, setPanelOpen] = useState(false)
+  // A path the file tree asked to insert; the composer consumes it and clears it.
+  const [pendingPath, setPendingPath] = useState<string | null>(null)
   const [theme, toggleTheme] = useTheme()
 
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), [])
@@ -32,6 +36,10 @@ export function App() {
   // One shortcut, because one is enough to learn: everything else is in the palette.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'j') {
+        event.preventDefault()
+        setPanelOpen((open) => !open)
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         setPaletteOpen((open) => !open)
@@ -88,8 +96,13 @@ export function App() {
           sessionId={sessionId}
           onActivity={refresh}
           onToggleTheme={toggleTheme}
+          pendingPath={pendingPath}
+          onPathConsumed={() => setPendingPath(null)}
         />
       </main>
+      {panelOpen && (
+        <WorkspacePanel onInsertPath={(path) => setPendingPath(path)} />
+      )}
       {paletteOpen && (
         <CommandPalette
           sessions={sessions}
