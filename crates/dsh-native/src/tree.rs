@@ -37,6 +37,8 @@ pub enum TreeError {
     NotADirectory(String),
     #[error("file is too large to preview ({0} bytes)")]
     TooLarge(u64),
+    #[error("not a text file: {0}")]
+    NotATextFile(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -115,11 +117,11 @@ pub fn list(root: &Path, path: &Path, show_noisy: bool) -> Result<Vec<Entry>, Tr
     Ok(entries)
 }
 
-/// Read a text file for preview, refusing anything that is not plausible text.
+/// Read a text file for preview, with the encoding it was actually in.
 ///
 /// The cap is not about memory: a preview that streams 40 MB into a WebView locks the window,
 /// and the user wanted to glance at the top of a file.
-pub fn read_preview(root: &Path, path: &Path, max_bytes: u64) -> Result<String, TreeError> {
+pub fn read_preview(root: &Path, path: &Path, max_bytes: u64) -> Result<crate::text::Decoded, TreeError> {
     let root = normalize(root)?;
     let target = normalize(path)?;
     if !target.starts_with(&root) {
@@ -130,12 +132,9 @@ pub fn read_preview(root: &Path, path: &Path, max_bytes: u64) -> Result<String, 
         return Err(TreeError::TooLarge(metadata.len()));
     }
     let bytes = std::fs::read(&target)?;
-    // NUL in the first chunk means binary; a preview full of replacement characters is noise
-    // dressed up as information.
-    if bytes.iter().take(4096).any(|byte| *byte == 0) {
-        return Err(TreeError::NotADirectory(target.display().to_string()));
-    }
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    // Decoding is in `text`: GBK is text, UTF-16 is text, and calling either "binary" (or
+    // rendering it as replacement characters) is how a preview lies to the reader.
+    crate::text::decode(&bytes).ok_or_else(|| TreeError::NotATextFile(target.display().to_string()))
 }
 
 /// Resolve a path to its absolute, canonical form.
@@ -193,12 +192,13 @@ mod tests {
     #[test]
     fn a_preview_reads_text_and_refuses_binaries() {
         let root = scratch("preview");
-        let text = read_preview(&root, &root.join("README.md"), 1024).expect("text");
+        let preview = read_preview(&root, &root.join("README.md"), 1024).expect("text");
         std::fs::write(root.join("blob.bin"), [0u8, 1, 2, 3]).expect("binary");
         let binary = read_preview(&root, &root.join("blob.bin"), 1024);
         let _ = std::fs::remove_dir_all(&root);
 
-        assert_eq!(text, "hello");
+        assert_eq!(preview.text, "hello");
+        assert_eq!(preview.encoding, "utf-8");
         assert!(binary.is_err(), "a NUL byte means binary, not text");
     }
 

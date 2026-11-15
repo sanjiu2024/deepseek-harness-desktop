@@ -9,5 +9,6 @@ rust-version.workspace = true
 
 [dependencies]
 serde.workspace = true
+encoding_rs = "0.8"
 portable-pty = "0.9"
 thiserror.workspace = true

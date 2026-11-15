@@ -114,6 +114,14 @@ export interface SearchHit {
   snippet: string
 }
 
+/** A file preview, with the encoding it was actually in. */
+export interface FilePreview {
+  text: string
+  encoding: 'utf-8' | 'utf-16le' | 'utf-16be' | 'gb18030'
+  /** Bytes had to be replaced: readable, not faithful. */
+  lossy: boolean
+}
+
 export const ipc = {
   appInfo: (): Promise<AppInfo> => invoke<AppInfo>('app_info'),
   kernelPaths: (): Promise<KernelPaths> => invoke<KernelPaths>('kernel_paths'),
@@ -140,8 +148,8 @@ export const ipc = {
     invoke<SettingsSnapshot>('settings_set', { provider, model }),
   fsTree: (path: string | null, showNoisy = false): Promise<TreeEntry[]> =>
     invoke<TreeEntry[]>('fs_tree', { path, showNoisy }),
-  fsRead: (path: string, maxBytes?: number): Promise<string> =>
-    invoke<string>('fs_read', { path, maxBytes }),
+  fsRead: (path: string, maxBytes?: number): Promise<FilePreview> =>
+    invoke<FilePreview>('fs_read', { path, maxBytes }),
   ptyOpen: (id: string, rows: number, cols: number): Promise<{ id: string; shell: string }> =>
     invoke<{ id: string; shell: string }>('pty_open', { id, rows, cols }),
   ptyWrite: (id: string, data: string): Promise<void> => invoke<void>('pty_write', { id, data }),

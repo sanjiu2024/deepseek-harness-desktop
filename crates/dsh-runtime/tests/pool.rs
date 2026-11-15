@@ -118,3 +118,77 @@ async fn a_dead_kernel_leaves_the_pool() {
     }
     panic!("the pool still holds a kernel that exited");
 }
+
+fn idle_config() -> KernelConfig {
+    KernelConfig {
+        node: "node".into(),
+        entry: std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/idle-kernel.mjs"),
+        profile: "sdk".into(),
+        patches: vec![],
+        home: std::env::temp_dir(),
+        cwd: std::env::current_dir().expect("cwd"),
+        env: Vec::new(),
+    }
+}
+
+fn idle_spawn() -> impl FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<KernelClient, String>>>> {
+    let config = idle_config();
+    || {
+        Box::pin(async move {
+            KernelClient::spawn(config)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_oldest_idle_route_is_evicted_at_capacity() {
+    // Capacity 2, three routes, none with a session: the least recently used one goes.
+    let pool = KernelPool::new(2);
+    let a = Route::new("fake", "a");
+    let b = Route::new("fake", "b");
+    let c = Route::new("fake", "c");
+
+    pool.acquire(&a, idle_spawn()).await.expect("a");
+    pool.acquire(&b, idle_spawn()).await.expect("b");
+    pool.acquire(&c, idle_spawn()).await.expect("c");
+
+    let routes = pool.routes().await;
+    let kept: Vec<String> = routes.iter().map(ToString::to_string).collect();
+    pool.shutdown_all(Duration::from_secs(2)).await;
+
+    assert_eq!(kept.len(), 2, "capacity is a cap, not a suggestion: {kept:?}");
+    assert!(!kept.contains(&a.to_string()), "the oldest idle route went first: {kept:?}");
+    assert!(kept.contains(&c.to_string()), "the one just asked for stays");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_route_with_a_session_is_never_evicted() {
+    // Closing a kernel ends its conversations, so the pool grows rather than doing that.
+    let pool = KernelPool::new(1);
+    let busy = Route::new("fake", "busy");
+    let other = Route::new("fake", "other");
+
+    pool.acquire(&busy, idle_spawn()).await.expect("busy");
+    pool.bind_session(&busy, "session-1").await;
+    pool.acquire(&other, idle_spawn()).await.expect("other");
+
+    let routes = pool.routes().await;
+    let kept: Vec<String> = routes.iter().map(ToString::to_string).collect();
+    pool.shutdown_all(Duration::from_secs(2)).await;
+
+    assert_eq!(kept.len(), 2, "capacity was exceeded on purpose: {kept:?}");
+    assert!(kept.contains(&busy.to_string()), "a route with a session survives");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn asking_again_reuses_the_same_kernel() {
+    let pool = KernelPool::new(2);
+    let route = Route::new("fake", "same");
+    let first = pool.acquire(&route, idle_spawn()).await.expect("first");
+    let second = pool.acquire(&route, idle_spawn()).await.expect("second");
+    let shared = std::sync::Arc::ptr_eq(&first, &second);
+    pool.shutdown_all(Duration::from_secs(2)).await;
+    assert!(shared, "a route must not get a second process");
+}

@@ -35,8 +35,10 @@ export function WorkspacePanel({ onInsertPath }: { onInsertPath: (path: string) 
   const open = async (path: string) => {
     setError(null)
     try {
-      const text = await ipc.fsRead(path)
-      setPreview({ path, text })
+      // `fsRead` returns the encoding too; the panel only needs the text today, and the
+      // encoding is there for whichever UI wants to show it.
+      const preview = await ipc.fsRead(path)
+      setPreview({ path, text: preview.text })
     } catch (cause) {
       setError(String(cause))
     }

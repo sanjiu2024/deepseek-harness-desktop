@@ -9,6 +9,33 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Fixed — a GBK file no longer previews as garbage
+
+The preview decoded with `from_utf8_lossy` and rejected anything containing a NUL byte. On a
+Chinese Windows that is wrong twice: a GBK `.txt` is not UTF-8, so it "succeeded" and came back
+full of replacement characters — the file looks corrupted instead of differently encoded — and a
+UTF-16 file has NULs everywhere, so good text was rejected as binary.
+
+`dsh_native::text::decode` tries, in order: **BOM → strict UTF-8 → GB18030 → lossy UTF-8**.
+`fs_read` now returns `{text, encoding, lossy}` so a UI can say *which* encoding it was, and
+`lossy` marks the one case where the text is readable but not faithful.
+
+### Added — the pool's eviction policy is now tested against real processes
+
+Three fixtures (`idle-kernel.mjs`) prove what the bookkeeping claims:
+
+- capacity 2, three idle routes → the least recently used one is closed;
+- capacity 1 with a session bound → the pool grows to 2 and the bound route survives;
+- asking for the same route twice → the same `Arc`, no second process.
+
+### Verified
+
+```
+cargo test -p dsh-native  --release → 10 + 2 pty
+cargo test -p dsh-runtime --release → 20 + 2 approval + 2 kernel + 5 pool
+cargo clippy --workspace --all-targets --release -D warnings → clean
+```
+
 ### Fixed — files are written atomically
 
 `settings.json`, the rename overlay and `provider.env` were overwritten in place. Every one of

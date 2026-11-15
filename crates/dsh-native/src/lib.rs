@@ -6,7 +6,9 @@
 //! offers a terminal has to be honest that it is a terminal.
 
 pub mod pty;
+pub mod text;
 pub mod tree;
 
 pub use pty::{Pty, PtyEvent, PtySize};
+pub use text::{decode, Decoded};
 pub use tree::{Entry, EntryKind, TreeError};

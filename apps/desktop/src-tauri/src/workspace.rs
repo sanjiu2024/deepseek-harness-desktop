@@ -166,7 +166,7 @@ pub fn fs_read(
     state: State<'_, AppState>,
     path: String,
     max_bytes: Option<u64>,
-) -> Result<String, String> {
+) -> Result<dsh_native::Decoded, String> {
     tree::read_preview(
         &state.workspace,
         std::path::Path::new(&path),
