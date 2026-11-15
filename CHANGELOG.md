@@ -9,6 +9,31 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Added — the trash is visible, and still never empties itself
+
+`session_trash` lists what is in `trash/` with id, deletion time, bytes and directory path;
+`session_empty_trash` clears it and reports how many entries went. There is **still no automatic
+cleanup**: a recycle bin that empties itself is not one. But a directory that grows forever is
+its own problem, so the cost is made visible and left to a person instead of to a timer.
+
+Restoring stays "move the directory back", which is why the path is part of the answer.
+
+### Fixed — ten previews at once could stop the machine responding
+
+`fs_read` was bounded by file size but not by count: ten clicks meant ten reads in flight, each
+held until its JSON crossed to the WebView. `dsh_native::gate::Gate` allows three and **refuses**
+the fourth instead of queuing it — a preview from ten clicks ago is no longer wanted. The permit
+is released on drop, including on a panic, so one failed preview cannot shrink the pool forever.
+
+### Verified
+
+```
+cargo test -p dsh-store  --release → 29 + 1 real-home (3 new: trash listing, emptying, absent)
+cargo test -p dsh-native --release → 14 + 4 pty (2 new: the gate, release on panic)
+cargo clippy --workspace --all-targets --release -D warnings → clean
+front end                          → 84
+```
+
 ### Performance — a directory listing is capped, and says so
 
 `fs_tree` returns at most 2000 entries plus `{total, truncated}`. A flat directory with tens of

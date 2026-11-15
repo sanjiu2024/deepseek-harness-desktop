@@ -109,6 +109,19 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
+/// One session sitting in the trash.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashEntry {
+    /// The session id, recoverable from the directory name.
+    pub id: String,
+    /// Milliseconds since the epoch when it was deleted.
+    pub deleted_at: i64,
+    pub bytes: u64,
+    /// Where it actually is, so "restore" can be a directory move.
+    pub path: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     #[error("unreadable session format v{version} at {path}")]
@@ -298,6 +311,62 @@ impl SessionStore {
         let mut titles = SessionTitles::load(self.home());
         titles.set(id, "").map_err(StoreError::Overlay)?;
         Ok(())
+    }
+
+    /// What is currently in the trash.
+    ///
+    /// The trash never empties itself — a recycle bin that empties itself is not one — but a
+    /// directory that grows forever is its own problem. This makes the cost visible so a UI can
+    /// show "回收站：3 项，120 MB" and let someone decide.
+    pub fn trash(&self) -> Result<Vec<TrashEntry>, StoreError> {
+        let dir = self.home().join("trash");
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            // No trash directory means nothing was ever deleted, not that something failed.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(StoreError::Io(error)),
+        };
+
+        let mut out = Vec::new();
+        for entry in entries.flatten() {
+            if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // Stored as "<id>-<epoch ms>"; ids can contain dashes, the stamp cannot.
+            let (id, deleted_at) = match name.rsplit_once('-') {
+                Some((id, stamp)) => (id.to_owned(), stamp.parse::<i64>().unwrap_or_default()),
+                None => (name.clone(), 0),
+            };
+            out.push(TrashEntry {
+                bytes: directory_bytes(&entry.path()),
+                path: entry.path().to_string_lossy().into_owned(),
+                id,
+                deleted_at,
+            });
+        }
+        out.sort_by_key(|entry| std::cmp::Reverse(entry.deleted_at));
+        Ok(out)
+    }
+
+    /// Empty the trash. Returns how many entries were removed.
+    ///
+    /// The only irreversible bulk operation in the crate; a UI must ask first.
+    pub fn empty_trash(&self) -> Result<usize, StoreError> {
+        let dir = self.home().join("trash");
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(StoreError::Io(error)),
+        };
+
+        let mut removed = 0;
+        for entry in entries.flatten() {
+            if std::fs::remove_dir_all(entry.path()).is_ok() {
+                removed += 1;
+            }
+        }
+        Ok(removed)
     }
 
     /// Remove a session for good. Nothing recovers this.
@@ -564,6 +633,24 @@ fn content_text(data: &serde_json::Value) -> Option<String> {
         .filter_map(|block| block.get("text").and_then(serde_json::Value::as_str))
         .collect();
     (!joined.is_empty()).then_some(joined)
+}
+
+/// Total bytes under a directory, without following symlinks out of it.
+fn directory_bytes(path: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    let mut total = 0;
+    for entry in entries.flatten() {
+        match entry.file_type() {
+            Ok(kind) if kind.is_dir() => total += directory_bytes(&entry.path()),
+            Ok(kind) if kind.is_file() => {
+                total += entry.metadata().map(|metadata| metadata.len()).unwrap_or(0)
+            }
+            _ => {}
+        }
+    }
+    total
 }
 
 /// A readable window around the first case-insensitive occurrence of `needle`.
@@ -1009,5 +1096,75 @@ mod search_limit_tests {
         let _ = std::fs::remove_dir_all(&root);
 
         assert_eq!(hits.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod trash_listing_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("dsh-trashlist-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).ok();
+        root
+    }
+
+    fn write_session(root: &Path, id: &str, body_bytes: usize) {
+        let dir = root.join(SESSIONS_DIR).join("--p--").join(id);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let header = format!(
+            r#"{{"type":"session","version":4,"id":"{id}","createdAt":1,"isSeeded":false,"delegationDepth":0}}"#
+        );
+        let mut content = header;
+        content.push('\n');
+        content.push_str(&"x".repeat(body_bytes));
+        std::fs::write(dir.join("session.v4.jsonl"), content).expect("write");
+    }
+
+    #[test]
+    fn a_deleted_session_shows_up_with_its_size() {
+        let root = scratch("list");
+        write_session(&root, "a", 2048);
+        let store = SessionStore::new(&root);
+        store.delete("a").expect("delete");
+
+        let trash = store.trash().expect("trash");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].id, "a");
+        assert!(trash[0].bytes > 2048, "the whole directory counts: {}", trash[0].bytes);
+        assert!(trash[0].deleted_at > 0, "the timestamp survives the round trip");
+    }
+
+    #[test]
+    fn emptying_the_trash_removes_everything_and_nothing_else() {
+        let root = scratch("empty");
+        write_session(&root, "keep", 10);
+        write_session(&root, "drop", 10);
+        let store = SessionStore::new(&root);
+        store.delete("drop").expect("delete");
+
+        let removed = store.empty_trash().expect("empty");
+        let listed = store.list().expect("list");
+        let trash = store.trash().expect("trash");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(removed, 1);
+        assert!(trash.is_empty());
+        assert_eq!(listed.len(), 1, "the session that was not deleted is untouched");
+        assert_eq!(listed[0].id, "keep");
+    }
+
+    #[test]
+    fn an_absent_trash_is_empty_not_an_error() {
+        let root = scratch("absent");
+        let store = SessionStore::new(&root);
+        let trash = store.trash().expect("trash");
+        let removed = store.empty_trash().expect("empty");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(trash.is_empty());
+        assert_eq!(removed, 0);
     }
 }

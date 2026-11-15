@@ -157,6 +157,7 @@ fn main() -> ExitCode {
             move |app| {
                 app.manage(AppState::resolve(data_dir));
                 app.manage(workspace::Terminals::default());
+                app.manage(workspace::Previews::default());
                 Ok(())
             }
         })

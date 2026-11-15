@@ -521,6 +521,8 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         session_rename,
         session_delete,
         session_purge,
+        session_trash,
+        session_empty_trash,
         session_export,
         session_export_to,
         kernel_stop,
@@ -691,4 +693,21 @@ async fn ensure_known_session(
             tracing::warn!(target: "dsh_desktop_app", %session_id, %error, "session/resume failed; prompting anyway");
         }
     }
+}
+
+/// What is sitting in the trash, with sizes.
+#[tauri::command]
+pub fn session_trash(state: State<'_, AppState>) -> Result<Vec<dsh_store::TrashEntry>, String> {
+    dsh_store::SessionStore::new(&state.dsh_home)
+        .trash()
+        .map_err(|error| error.to_string())
+}
+
+/// Empty the trash. Returns how many sessions were removed.
+#[tauri::command]
+pub fn session_empty_trash(state: State<'_, AppState>) -> Result<usize, String> {
+    tracing::warn!(target: "dsh_desktop_app", "session_empty_trash");
+    dsh_store::SessionStore::new(&state.dsh_home)
+        .empty_trash()
+        .map_err(|error| error.to_string())
 }

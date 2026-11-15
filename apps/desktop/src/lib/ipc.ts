@@ -130,6 +130,13 @@ export interface TreeListing {
   truncated: boolean
 }
 
+export interface TrashEntry {
+  id: string
+  deletedAt: number
+  bytes: number
+  path: string
+}
+
 export const ipc = {
   appInfo: (): Promise<AppInfo> => invoke<AppInfo>('app_info'),
   kernelPaths: (): Promise<KernelPaths> => invoke<KernelPaths>('kernel_paths'),
@@ -175,6 +182,10 @@ export const ipc = {
   sessionDelete: (id: string): Promise<void> => invoke<void>('session_delete', { id }),
   /** Remove a session for good. Nothing recovers this. */
   sessionPurge: (id: string): Promise<void> => invoke<void>('session_purge', { id }),
+  /** What is in the trash, with sizes. */
+  sessionTrash: (): Promise<TrashEntry[]> => invoke<TrashEntry[]>('session_trash'),
+  /** Empty the trash; returns how many were removed. */
+  sessionEmptyTrash: (): Promise<number> => invoke<number>('session_empty_trash'),
   sessionExport: (id: string): Promise<string> => invoke<string>('session_export', { id }),
   sessionExportTo: (id: string, path: string): Promise<void> =>
     invoke<void>('session_export_to', { id, path }),

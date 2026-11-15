@@ -5,10 +5,12 @@
 //! to leave the workspace; the PTY is a real process, not a command runner — an app that
 //! offers a terminal has to be honest that it is a terminal.
 
+pub mod gate;
 pub mod pty;
 pub mod text;
 pub mod tree;
 
+pub use gate::{Gate, DEFAULT_PREVIEW_LIMIT};
 pub use pty::{Pty, PtyEvent, PtySize};
 pub use text::{decode, Decoded};
 pub use tree::{Entry, EntryKind, TreeError};

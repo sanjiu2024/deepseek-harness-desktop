@@ -28,6 +28,15 @@ pub const PTY_EXIT_EVENT: &str = "pty://exit";
 const MAX_TERMINALS: usize = 8;
 
 /// Open shells, by the id the front end minted.
+/// Caps how many previews are read at once; see `dsh_native::gate`.
+pub struct Previews(pub dsh_native::Gate);
+
+impl Default for Previews {
+    fn default() -> Self {
+        Self(dsh_native::Gate::new(dsh_native::DEFAULT_PREVIEW_LIMIT))
+    }
+}
+
 #[derive(Default)]
 pub struct Terminals {
     shells: Mutex<HashMap<String, Arc<Pty>>>,
@@ -164,9 +173,15 @@ pub fn fs_tree(
 #[tauri::command]
 pub fn fs_read(
     state: State<'_, AppState>,
+    previews: State<'_, Previews>,
     path: String,
     max_bytes: Option<u64>,
 ) -> Result<dsh_native::Decoded, String> {
+    // A permit, not a queue: a preview from ten clicks ago is no longer wanted, so the call
+    // that arrives when the gate is full is refused with a reason instead of waiting.
+    let _permit = previews.0.try_enter().ok_or_else(|| {
+        "已经有 3 个文件在读，等一个读完再点".to_owned()
+    })?;
     tree::read_preview(
         &state.workspace,
         std::path::Path::new(&path),
