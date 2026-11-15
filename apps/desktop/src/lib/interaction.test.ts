@@ -100,3 +100,25 @@ describe('result bodies', () => {
     expect(cancelledQuestion()).toEqual({ cancelled: true })
   })
 })
+
+describe('string frame ids', () => {
+  it('accepts the kernel string ids on an approval request', () => {
+    // The kernel issues `req_<uuid>` ids for its own requests. Typing the id as a
+    // number is what once turned every approval into a notification.
+    const parsed = parseInteraction('approval/request', 'req_9f3c', {
+      sessionId: 's1',
+      toolName: 'pwsh',
+    })
+    expect(parsed).toEqual({
+      kind: 'approval',
+      id: 'req_9f3c',
+      sessionId: 's1',
+      toolName: 'pwsh',
+    })
+  })
+
+  it('keeps the id form when answering', () => {
+    const parsed = parseInteraction('approval/request', 7, { sessionId: 's', toolName: 't' })
+    expect(parsed?.id).toBe(7)
+  })
+})

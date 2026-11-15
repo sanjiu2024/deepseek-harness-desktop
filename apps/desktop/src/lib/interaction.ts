@@ -7,6 +7,8 @@
  * module with their own shapes rather than being folded into the event reducer.
  */
 
+import type { FrameId } from './ipc.ts'
+
 /** AskUserQuestionItem, narrowed to what a client has to render. */
 export interface QuestionOption {
   label: string
@@ -26,8 +28,8 @@ export interface Question {
 export type PendingInteraction =
   | {
       kind: 'approval'
-      /** JSON-RPC id to answer. */
-      id: number
+      /** JSON-RPC id to answer, in whatever form the kernel used. */
+      id: FrameId
       sessionId: string
       toolName: string
       callId?: string
@@ -35,7 +37,7 @@ export type PendingInteraction =
     }
   | {
       kind: 'question'
-      id: number
+      id: FrameId
       requestId: string
       sessionId: string
       questions: Question[]
@@ -53,7 +55,7 @@ export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled'
  */
 export function parseInteraction(
   method: string,
-  id: number,
+  id: FrameId,
   params: unknown,
 ): PendingInteraction | null {
   const body = asRecord(params)

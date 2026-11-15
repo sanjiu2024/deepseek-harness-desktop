@@ -29,8 +29,17 @@ export interface KernelPaths {
 /** A frame the kernel sent us. */
 export type KernelFrame =
   | { kind: 'notification'; method: string; params: unknown }
-  | { kind: 'request'; id: number; method: string; params: unknown }
-  | { kind: 'response'; id: number; payload: KernelPayload }
+  | { kind: 'request'; id: FrameId; method: string; params: unknown }
+  | { kind: 'response'; id: FrameId; payload: KernelPayload }
+
+/**
+ * A JSON-RPC id exactly as the kernel sent it.
+ *
+ * The kernel uses **string** ids for the requests it issues (`req_<uuid>`) and
+ * this client uses numbers, so narrowing to `number` silently turns every
+ * approval request into a notification the view ignores.
+ */
+export type FrameId = number | string
 
 export type KernelPayload =
   | { status: 'ok'; [index: string]: unknown }
@@ -62,7 +71,7 @@ export const ipc = {
       reasoningEffort: options.reasoningEffort ?? null,
     }),
   /** Answer a kernel-initiated request. Forgetting this stalls the agent. */
-  kernelAnswer: (id: number, result: unknown): Promise<void> =>
+  kernelAnswer: (id: FrameId, result: unknown): Promise<void> =>
     invoke<void>('kernel_answer', { id, result }),
 }
 

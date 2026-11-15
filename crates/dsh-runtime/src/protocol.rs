@@ -48,6 +48,38 @@ pub enum ApprovalOutcome {
     Cancelled,
 }
 
+/// A JSON-RPC id as it appears on the wire.
+///
+/// The kernel issues **string** ids for the requests it sends (`req_<uuid>`) while
+/// this client issues numbers. Accepting only one of them is how an approval
+/// request gets classified as a notification, never surfaces as a decision, and
+/// leaves the agent blocked with nothing on screen.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FrameId {
+    Number(u64),
+    Text(String),
+}
+
+impl FrameId {
+    /// The numeric id, when this is one of ours.
+    pub fn as_number(&self) -> Option<u64> {
+        match self {
+            FrameId::Number(value) => Some(*value),
+            FrameId::Text(_) => None,
+        }
+    }
+}
+
+impl std::fmt::Display for FrameId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FrameId::Number(value) => write!(formatter, "{value}"),
+            FrameId::Text(value) => write!(formatter, "{value}"),
+        }
+    }
+}
+
 /// One parsed inbound message.
 ///
 /// Serialised for the front end as `{"kind":"notification"|"request"|"response",
@@ -58,9 +90,9 @@ pub enum Incoming {
     /// A notification: no id, nothing to answer.
     Notification { method: String, params: serde_json::Value },
     /// A request from the kernel that must be answered, or the agent stalls.
-    Request { id: u64, method: String, params: serde_json::Value },
+    Request { id: FrameId, method: String, params: serde_json::Value },
     /// A reply to one of our requests.
-    Response { id: u64, payload: ResponsePayload },
+    Response { id: FrameId, payload: ResponsePayload },
 }
 
 /// Body of a reply frame.
@@ -102,13 +134,21 @@ pub fn parse_frame(line: &str) -> Result<Incoming, ProtocolError> {
     classify(value)
 }
 
+/** Read an id in either wire form. */
+fn read_id(value: &serde_json::Value) -> Option<FrameId> {
+    if let Some(number) = value.as_u64() {
+        return Some(FrameId::Number(number));
+    }
+    value.as_str().map(|text| FrameId::Text(text.to_owned()))
+}
+
 /// Classify one already-parsed frame.
 pub fn classify(value: serde_json::Value) -> Result<Incoming, ProtocolError> {
     let object = value
         .as_object()
         .ok_or_else(|| ProtocolError::NotAnObject(value.to_string()))?;
 
-    let id = object.get("id").and_then(serde_json::Value::as_u64);
+    let id = object.get("id").and_then(read_id);
     let method = object.get("method").and_then(serde_json::Value::as_str);
     let params = object
         .get("params")
@@ -165,8 +205,13 @@ pub fn request_frame(id: u64, method: &str, params: &serde_json::Value) -> Strin
 }
 
 /// A response frame answering a kernel request.
-pub fn response_frame(id: u64, payload: &ResponsePayload) -> String {
-    let mut line = format!("{{\"jsonrpc\":\"2.0\",\"id\":{id}");
+pub fn response_frame(id: &FrameId, payload: &ResponsePayload) -> String {
+    let encoded_id = match id {
+        FrameId::Number(value) => value.to_string(),
+        // A string id must go back as a JSON string, not as a bare word.
+        FrameId::Text(value) => serde_json::Value::String(value.clone()).to_string(),
+    };
+    let mut line = format!("{{\"jsonrpc\":\"2.0\",\"id\":{encoded_id}");
     match payload {
         ResponsePayload::Ok(value) => {
             line.push_str(",\"result\":");
@@ -225,7 +270,7 @@ mod tests {
         let Incoming::Request { id, method, .. } = parse_frame(frame).expect("parses") else {
             panic!("expected a request");
         };
-        assert_eq!(id, 7);
+        assert_eq!(id, FrameId::Number(7));
         assert_eq!(method, "approval/request");
     }
 
@@ -235,7 +280,7 @@ mod tests {
         let Incoming::Response { id, payload } = parse_frame(frame).expect("parses") else {
             panic!("expected a response");
         };
-        assert_eq!(id, 3);
+        assert_eq!(id, FrameId::Number(3));
         assert_eq!(payload, ResponsePayload::Ok(serde_json::json!({"serverInfo": {"name": "x"}})));
     }
 
@@ -266,7 +311,7 @@ mod tests {
         let Incoming::Request { id, method, params } = parse_frame(&line).expect("parses") else {
             panic!("expected a request");
         };
-        assert_eq!(id, 42);
+        assert_eq!(id, FrameId::Number(42));
         assert_eq!(method, "session/prompt");
         assert_eq!(params["sessionId"], "abc");
     }
@@ -274,7 +319,7 @@ mod tests {
     #[test]
     fn response_frame_escapes_message_quotes() {
         let line = response_frame(
-            1,
+            &FrameId::Number(1),
             &ResponsePayload::Err(RpcError {
                 code: -32603,
                 message: "bad \"quoted\" text".to_owned(),
@@ -300,7 +345,7 @@ mod wire_shape_tests {
     #[test]
     fn a_request_serialises_with_a_kind_tag() {
         let value = serde_json::to_value(Incoming::Request {
-            id: 7,
+            id: FrameId::Number(7),
             method: request::APPROVAL.to_owned(),
             params: serde_json::json!({ "sessionId": "s", "toolName": "pwsh" }),
         })
@@ -323,10 +368,47 @@ mod wire_shape_tests {
         assert_eq!(value["kind"], "notification");
     }
 
+/// The kernel issues string ids for the requests it sends. Reading only
+    /// numbers classified every approval as a notification, so no dialog appeared
+    /// and the agent stayed blocked — the bug this test exists to prevent.
+    #[test]
+    fn a_request_with_a_string_id_is_a_request_not_a_notification() {
+        let frame =
+            r#"{"jsonrpc":"2.0","id":"req_9f3c","method":"approval/request","params":{"sessionId":"s","toolName":"pwsh"}}"#;
+        let Incoming::Request { id, method, .. } = parse_frame(frame).expect("parses") else {
+            panic!("a frame with an id and a method must be a request");
+        };
+        assert_eq!(id, FrameId::Text("req_9f3c".to_owned()));
+        assert_eq!(method, "approval/request");
+    }
+
+    #[test]
+    fn answering_a_string_id_echoes_it_as_a_string() {
+        let line = response_frame(
+            &FrameId::Text("req_9f3c".to_owned()),
+            &ResponsePayload::Ok(serde_json::json!({ "outcome": "allowed-once" })),
+        );
+        assert!(line.contains("\"id\":\"req_9f3c\""), "line was {line}");
+
+        let Incoming::Response { id, .. } = parse_frame(&line).expect("parses") else {
+            panic!("expected a response");
+        };
+        assert_eq!(id, FrameId::Text("req_9f3c".to_owned()));
+    }
+
+    #[test]
+    fn a_numeric_id_still_works() {
+        let frame = r#"{"jsonrpc":"2.0","id":12,"method":"session/wait","params":{}}"#;
+        let Incoming::Request { id, .. } = parse_frame(frame).expect("parses") else {
+            panic!("expected a request");
+        };
+        assert_eq!(id, FrameId::Number(12));
+    }
+
     #[test]
     fn a_response_serialises_with_a_kind_tag() {
         let value = serde_json::to_value(Incoming::Response {
-            id: 1,
+            id: FrameId::Number(1),
             payload: ResponsePayload::Ok(serde_json::json!({})),
         })
         .expect("serialises");

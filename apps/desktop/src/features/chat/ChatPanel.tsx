@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ipc, onKernelFrame, promptSession, type KernelFrame } from '@/lib/ipc.ts'
+import { ipc, onKernelFrame, promptSession, type FrameId, type KernelFrame } from '@/lib/ipc.ts'
 
-const ipcAnswer = (id: number, result: unknown) => ipc.kernelAnswer(id, result)
+const ipcAnswer = (id: FrameId, result: unknown) => ipc.kernelAnswer(id, result)
 import {
   applyLiveChunk,
   emptyChat,

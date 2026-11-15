@@ -155,15 +155,27 @@ pub async fn kernel_call(
 }
 
 /// Answer a kernel-initiated request, e.g. an approval prompt.
+///
+/// The id is passed through as JSON because the kernel issues **string** ids
+/// (`req_<uuid>`) for the requests it sends; assuming numbers here is what once
+/// made every approval look like a notification.
 #[tauri::command]
 pub fn kernel_answer(
     state: State<'_, AppState>,
-    id: u64,
+    id: serde_json::Value,
     result: serde_json::Value,
 ) -> Result<(), String> {
+    let id = match &id {
+        serde_json::Value::Number(number) => number
+            .as_u64()
+            .map(dsh_runtime::FrameId::Number)
+            .ok_or_else(|| format!("unsupported numeric id: {id}"))?,
+        serde_json::Value::String(text) => dsh_runtime::FrameId::Text(text.clone()),
+        other => return Err(format!("unsupported id: {other}")),
+    };
     state
         .running()?
-        .answer(id, ResponsePayload::Ok(result))
+        .answer(&id, ResponsePayload::Ok(result))
         .map_err(|error| error.to_string())
 }
 

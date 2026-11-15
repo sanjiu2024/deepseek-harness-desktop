@@ -192,7 +192,9 @@ impl KernelClient {
                     }
                     match protocol::parse_frame(&line) {
                         Ok(Incoming::Response { id, payload }) => {
-                            let call = pending.lock().expect("pending lock").remove(&id);
+                            let call = id
+                                .as_number()
+                                .and_then(|number| pending.lock().expect("pending lock").remove(&number));
                             if let Some(call) = call {
                                 let _ = call.sender.send(payload);
                             }
@@ -350,14 +352,14 @@ impl KernelClient {
     }
 
     /// Answer a kernel-initiated request. Forgetting this stalls the agent.
-    pub fn answer(&self, id: u64, payload: ResponsePayload) -> Result<(), RuntimeError> {
+    pub fn answer(&self, id: &protocol::FrameId, payload: ResponsePayload) -> Result<(), RuntimeError> {
         self.send_line(protocol::response_frame(id, &payload))
     }
 
     /// Convenience wrapper for the approval flow.
     pub fn answer_approval(
         &self,
-        id: u64,
+        id: &protocol::FrameId,
         outcome: protocol::ApprovalOutcome,
     ) -> Result<(), RuntimeError> {
         let value = serde_json::to_value(outcome).map_err(|error| {

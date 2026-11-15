@@ -4,6 +4,55 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-11-15
+
+The approval dialog never appeared because the client could not read the kernel's ids.
+
+### The bug
+
+The frame log settled it in one line:
+
+```
+notification	approval/request
+```
+
+An approval is a JSON-RPC **request**, but the client logged it as a notification. The kernel
+issues **string** ids for the requests it sends (`req_<uuid>` in
+`packages/sdk/protocol/src/transport.ts`); this client read the id with
+`Value::as_u64`, got `None` for a string, and classified the frame as an id-less
+notification. The view only opens its dialog for `kind === "request"`, so it never did — and the
+agent stayed blocked forever with nothing on screen.
+
+Both sides of the seam were typed `number`: Rust's `Incoming::Request.id: u64` and the front
+end's `KernelFrame.id: number`. Neither type check could see the wire.
+
+### Fixed
+
+- `FrameId` in `dsh-runtime` accepts a number **or** a string, carries it on requests and
+  responses, and `response_frame` echoes a string id back as a JSON string. `answer()` and
+  `answer_approval()` take `&FrameId`; only numeric ids can match a pending call.
+- `kernel_answer` accepts the id as JSON and converts both forms.
+- The front end's `FrameId` is `number | string` throughout, including `parseInteraction`.
+
+### Tests that would have caught it
+
+- A frame with a string id and a method is a **request**, not a notification.
+- Answering a string id echoes it quoted, and the reply parses back with the same id.
+- A numeric id still works.
+- The front end parses an approval whose id is `req_9f3c`.
+
+### Corrected
+
+The Rust integration test removed in 0.8.0 as "dependent on model behaviour" was not flaky: it
+asserted that an escalating prompt produces `Incoming::Request`, and it was failing because it
+was right. It is replaced by the deterministic classification tests above, which do not need a
+model at all.
+
+### Verified
+
+- `cargo test -p dsh-runtime` → 16 unit + 2 integration (real kernel, 14.94s) pass.
+- `pnpm --filter @dsh-desktop/app test` → 49 passed. `cargo clippy -D warnings` clean.
+
 ## [0.8.1] — 2026-11-15
 
 A frame log, because "the dialog never appeared" has two opposite causes.
