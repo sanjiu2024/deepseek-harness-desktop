@@ -26,15 +26,15 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // Keep the WebView2 profile in our own directory rather than inheriting a
-    // default. Two reasons: the location is then something we control and can
-    // document, and on a machine with an aggressive security driver the default
-    // location has been observed unusable while an explicit one works.
-    //
-    // This is not a complete defence — see docs/句柄占用.md. A filter driver can
-    // refuse profile creation without holding any handle, which no handle query
-    // will report.
-    let profile = data_dir.join("EBWebView");
+    // The WebView2 profile lives beside the kernel home, not in the OS default
+    // location. Measured: a process started from inside the harness sandbox may
+    // write its workspace and the temp directory but not `%APPDATA%` or
+    // `%LOCALAPPDATA%`, so a profile there is created with `EACCES` and WebView2
+    // reports the failure as `0x800700AA` / `0x8000FFFF`. Keeping it with the
+    // rest of our data makes the location writable wherever the app is allowed
+    // to run at all.
+    let home = state::dsh_home(&data_dir);
+    let profile = home.join("webview2");
     if let Err(error) = std::fs::create_dir_all(&profile) {
         eprintln!("cannot create {}: {error}", profile.display());
         return ExitCode::FAILURE;

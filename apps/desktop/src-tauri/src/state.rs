@@ -32,6 +32,16 @@ fn identifier() -> String {
         .unwrap_or_else(|| "com.dsh.desktop".to_owned())
 }
 
+/// The kernel home for this run.
+///
+/// `DSH_DESKTOP_HOME` wins so a development run keeps everything inside the
+/// checkout; otherwise it sits under the app data directory.
+pub fn dsh_home(data_dir: &std::path::Path) -> PathBuf {
+    std::env::var_os("DSH_DESKTOP_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| data_dir.join("dsh-home"))
+}
+
 pub struct AppState {
     /// Private kernel home. Never `~/.dsh` — that belongs to the user's CLI.
     pub dsh_home: PathBuf,

@@ -4,6 +4,53 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-11-15
+
+Root cause found, and it was neither a handle nor a security driver.
+
+### Found
+
+The WebView2 profile directory could not be created — the app's own error said so once it
+printed the reason:
+
+```
+cannot create C:\Users\Administrator\AppData\Roaming\com.sanjiu2024.dsh-desktop\EBWebView:
+拒绝访问。 (os error 5)
+```
+
+A process started from inside the harness sandbox may write its workspace and the temp
+directory but **not** `%APPDATA%` or `%LOCALAPPDATA%`. WebView2 turns that `EACCES` into
+`0x800700AA` ("resource in use") or `0x8000FFFF` ("catastrophic failure"), which is why every
+handle query came back empty and why copies in `%TEMP%` worked while the in-place binary did
+not.
+
+Corrections to earlier conclusions in this file:
+
+- 0.6.4 claimed a security driver keyed to the project path. Wrong: the variable is **where the
+  profile is created**, not where the binary lives. Removing 火绒 changed nothing.
+- 0.6.1 claimed a missing `%APPDATA%\<identifier>` parent. Also wrong, for the same reason.
+
+Both were plausible from the observations and both were falsified by a later measurement. The
+lesson is recorded in `docs/句柄占用.md`: when a program fails to create a file, make it **print
+the operating system's own error** instead of guessing from the resulting status code.
+
+### Changed
+
+- The WebView2 profile lives beside the kernel home (`<home>/webview2`), which is inside the
+  workspace in development and under the app data directory when packaged. Same rule as the
+  session store: our data lives where we are allowed to write.
+- `scripts/dev.mjs` now orchestrates the loop itself instead of delegating to `tauri dev`:
+  build, wait for the binary to settle, start Vite, wait for the port, run the app, stop Vite.
+  The port probe is an in-process socket over both loopback families, because Vite binds
+  `localhost` → `::1` here and a spawned probe child is denied piped stdio by the sandbox.
+- `AppState::dsh_home` extracted so the startup path and the managed state agree on one answer.
+
+### Verified
+
+- Five consecutive launches from `target\debug\` inside the project directory: 5/5.
+- `node scripts/dev.mjs`: `[dev] binary settled after 3.6s` → `[dev] vite ready on ::1:1420` →
+  app window titled `DeepSeek Harness Desktop`, profile created at `.dev-home/webview2/EBWebView`.
+
 ## [0.6.4] — 2026-11-15
 
 The blocking cause is a driver, not a handle — and no handle query can see it.

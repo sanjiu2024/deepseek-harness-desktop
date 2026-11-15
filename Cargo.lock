@@ -851,7 +851,7 @@ dependencies = [
 
 [[package]]
 name = "dsh-desktop-app"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "dsh-runtime",
  "serde",
@@ -871,7 +871,7 @@ dependencies = [
 
 [[package]]
 name = "dsh-native"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -879,7 +879,7 @@ dependencies = [
 
 [[package]]
 name = "dsh-runtime"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -890,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "dsh-store"
-version = "0.6.3"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
