@@ -122,6 +122,14 @@ export interface FilePreview {
   lossy: boolean
 }
 
+/** One directory, capped. `truncated` means the tree is showing a subset. */
+export interface TreeListing {
+  entries: TreeEntry[]
+  /** How many entries the directory actually had, before the cap. */
+  total: number
+  truncated: boolean
+}
+
 export const ipc = {
   appInfo: (): Promise<AppInfo> => invoke<AppInfo>('app_info'),
   kernelPaths: (): Promise<KernelPaths> => invoke<KernelPaths>('kernel_paths'),
@@ -146,8 +154,8 @@ export const ipc = {
     invoke<SettingsSnapshot>('settings_set_secret', { name, value }),
   settingsSet: (provider: string, model: string): Promise<SettingsSnapshot> =>
     invoke<SettingsSnapshot>('settings_set', { provider, model }),
-  fsTree: (path: string | null, showNoisy = false): Promise<TreeEntry[]> =>
-    invoke<TreeEntry[]>('fs_tree', { path, showNoisy }),
+  fsTree: (path: string | null, showNoisy = false): Promise<TreeListing> =>
+    invoke<TreeListing>('fs_tree', { path, showNoisy }),
   fsRead: (path: string, maxBytes?: number): Promise<FilePreview> =>
     invoke<FilePreview>('fs_read', { path, maxBytes }),
   ptyOpen: (id: string, rows: number, cols: number): Promise<{ id: string; shell: string }> =>

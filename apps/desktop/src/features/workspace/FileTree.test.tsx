@@ -13,13 +13,18 @@ function entry(name: string, kind: 'file' | 'directory', path: string) {
   return { name, path, kind, size: kind === 'file' ? 10 : null, modified: null }
 }
 
+/** The command now answers with a capped listing, not a bare array. */
+function listing(entries: ReturnType<typeof entry>[]) {
+  return { entries, total: entries.length, truncated: false }
+}
+
 beforeEach(() => {
   invoke.mockReset()
 })
 
 describe('file tree', () => {
   it('loads one directory at a time, not the whole repository', async () => {
-    invoke.mockResolvedValue([entry('src', 'directory', 'D:/repo/src'), entry('README.md', 'file', 'D:/repo/README.md')])
+    invoke.mockResolvedValue(listing([entry('src', 'directory', 'D:/repo/src'), entry('README.md', 'file', 'D:/repo/README.md')]))
     render(<FileTree onOpen={() => {}} />)
 
     await screen.findByText('src')
@@ -31,8 +36,8 @@ describe('file tree', () => {
 
   it('expands a directory on click and fetches its children', async () => {
     invoke
-      .mockResolvedValueOnce([entry('src', 'directory', 'D:/repo/src')])
-      .mockResolvedValueOnce([entry('main.ts', 'file', 'D:/repo/src/main.ts')])
+      .mockResolvedValueOnce(listing([entry('src', 'directory', 'D:/repo/src')]))
+      .mockResolvedValueOnce(listing([entry('main.ts', 'file', 'D:/repo/src/main.ts')]))
     render(<FileTree onOpen={() => {}} />)
 
     await userEvent.click(await screen.findByText('src'))
@@ -42,7 +47,7 @@ describe('file tree', () => {
 
   it('opens a file rather than expanding it', async () => {
     const opened: string[] = []
-    invoke.mockResolvedValue([entry('README.md', 'file', 'D:/repo/README.md')])
+    invoke.mockResolvedValue(listing([entry('README.md', 'file', 'D:/repo/README.md')]))
     render(<FileTree onOpen={(path) => opened.push(path)} />)
 
     await userEvent.click(await screen.findByText('README.md'))

@@ -121,3 +121,31 @@ fn a_burst_of_output_is_coalesced() {
         "output should be coalesced, not one event per read: {events} events for {bytes} bytes",
     );
 }
+
+#[test]
+fn a_large_paste_does_not_block_the_caller() {
+    // `pty_write` arrives from a Tauri command thread; writing straight to the master would
+    // block that thread until the shell drains its input buffer.
+    let pty = Pty::spawn(&std::env::temp_dir(), PtySize::default(), |_| {}).expect("spawn");
+
+    // 512 KB of input. Queued, not written inline: the calls must return promptly even though
+    // the shell consumes far slower than we produce.
+    let paste = vec![b'x'; 512 * 1024];
+    let started = Instant::now();
+    let mut accepted = 0;
+    for _ in 0..64 {
+        if pty.write(&paste[..8 * 1024]).is_err() {
+            // The queue is full: refusing is the designed behaviour, not a failure.
+            break;
+        }
+        accepted += 1;
+    }
+    let elapsed = started.elapsed();
+    pty.close();
+
+    assert!(accepted > 0, "at least one chunk must be accepted");
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "queuing {accepted} chunks took {elapsed:?} — writes are blocking again",
+    );
+}

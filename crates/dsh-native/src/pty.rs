@@ -34,7 +34,9 @@ pub enum PtyEvent {
 
 /// One shell session.
 pub struct Pty {
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    /// Queue to the writer thread. Bounded: a caller that outruns the shell gets an error
+    /// instead of blocking a command thread or growing a buffer without limit.
+    outbound: std::sync::mpsc::SyncSender<Vec<u8>>,
     master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
     /// Set by `close`; the reader thread stops when it sees it.
     closed: Arc<AtomicBool>,
@@ -72,10 +74,29 @@ impl Pty {
             .master
             .try_clone_reader()
             .map_err(|error| error.to_string())?;
-        let writer = pair
+        let mut writer = pair
             .master
             .take_writer()
             .map_err(|error| error.to_string())?;
+
+        // A dedicated writer thread, fed by a bounded queue.
+        //
+        // `pty_write` arrives from a Tauri command thread. Writing straight to the master there
+        // means a large paste blocks that thread until the shell drains its buffer — with a
+        // 1 MB paste and a shell that is busy, that is a visible freeze in the window, caused by
+        // the terminal rather than by the shell.
+        let (outbound, inbound) = std::sync::mpsc::sync_channel::<Vec<u8>>(WRITE_QUEUE_CHUNKS);
+        std::thread::spawn(move || {
+            while let Ok(chunk) = inbound.recv() {
+                if writer.write_all(&chunk).is_err() {
+                    break;
+                }
+                // Flush per chunk: a terminal that holds keystrokes in a buffer feels broken.
+                if writer.flush().is_err() {
+                    break;
+                }
+            }
+        });
 
         let closed = Arc::new(AtomicBool::new(false));
         let reader_closed = Arc::clone(&closed);
@@ -120,17 +141,22 @@ impl Pty {
         });
 
         Ok(Self {
-            writer: Arc::new(Mutex::new(writer)),
+            outbound,
             master: Arc::new(Mutex::new(pair.master)),
             closed,
         })
     }
 
     /// Hand bytes to the shell exactly as typed.
+    /// Queue input for the shell.
+    ///
+    /// Returns an error when the queue is full — a caller producing input faster than the shell
+    /// consumes it is a bug worth surfacing, not something to absorb silently by growing a
+    /// buffer until the process runs out of memory.
     pub fn write(&self, data: &[u8]) -> Result<(), String> {
-        let mut writer = self.writer.lock().map_err(|error| error.to_string())?;
-        writer.write_all(data).map_err(|error| error.to_string())?;
-        writer.flush().map_err(|error| error.to_string())
+        self.outbound
+            .try_send(data.to_vec())
+            .map_err(|_| "the terminal is not keeping up with input; drop some keystrokes".to_owned())
     }
 
     /// Tell the shell the window changed size, so full-screen tools redraw correctly.
@@ -151,6 +177,13 @@ impl Pty {
         self.closed.store(true, Ordering::Relaxed);
     }
 }
+
+/// How many input chunks may wait for the shell.
+///
+/// A chunk is whatever one `pty_write` carried — a keystroke or a paste. A thousand of them is
+/// far more than a person types ahead of a shell, and small enough that a runaway producer is
+/// stopped rather than buffered.
+const WRITE_QUEUE_CHUNKS: usize = 1024;
 
 /// Flush once this much output has accumulated. 8 KB is one read; two reads in a row from a
 /// fast writer are the case worth coalescing.

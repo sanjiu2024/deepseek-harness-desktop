@@ -14,7 +14,7 @@ export function FileTree({ onOpen }: { onOpen: (path: string) => void }) {
   useEffect(() => {
     void ipc
       .fsTree(null)
-      .then(setRoots)
+      .then((listing) => setRoots(listing.entries))
       .catch((cause: unknown) => setError(String(cause)))
   }, [])
 
@@ -49,7 +49,8 @@ function Node({
 
   const load = useCallback(async () => {
     try {
-      setChildren(await ipc.fsTree(entry.path))
+      const listing = await ipc.fsTree(entry.path)
+      setChildren(listing.entries)
     } catch (cause) {
       setError(String(cause))
     }

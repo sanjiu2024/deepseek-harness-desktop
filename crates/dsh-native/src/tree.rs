@@ -29,6 +29,24 @@ pub struct Entry {
     pub modified: Option<i64>,
 }
 
+/// One directory, capped.
+///
+/// A flat directory with a hundred thousand files is not hypothetical — a build output folder is
+/// exactly that — and returning every entry turns one call into megabytes of JSON that no tree
+/// view can render anyway. The cap is reported rather than applied silently: a truncated listing
+/// that looks complete is worse than an error.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Listing {
+    pub entries: Vec<Entry>,
+    /// How many entries the directory actually had, before the cap.
+    pub total: usize,
+    pub truncated: bool,
+}
+
+/// More than this and nobody is scrolling, they are searching.
+pub const MAX_ENTRIES: usize = 2000;
+
 #[derive(Debug, thiserror::Error)]
 pub enum TreeError {
     #[error("path escapes the workspace: {0}")]
@@ -59,7 +77,7 @@ pub const NOISY: &[&str] = &[
 ///
 /// `root` is the workspace. Any request outside it is refused rather than clamped: silently
 /// showing a different directory than the one asked for is worse than an error.
-pub fn list(root: &Path, path: &Path, show_noisy: bool) -> Result<Vec<Entry>, TreeError> {
+pub fn list(root: &Path, path: &Path, show_noisy: bool) -> Result<Listing, TreeError> {
     let root = normalize(root)?;
     let target = if path.as_os_str().is_empty() {
         root.clone()
@@ -74,10 +92,17 @@ pub fn list(root: &Path, path: &Path, show_noisy: bool) -> Result<Vec<Entry>, Tr
     }
 
     let mut entries = Vec::new();
+    let mut total = 0usize;
     for item in std::fs::read_dir(&target)? {
         let item = item?;
         let name = item.file_name().to_string_lossy().into_owned();
         if !show_noisy && NOISY.contains(&name.as_str()) {
+            continue;
+        }
+        total += 1;
+        // Count everything, build only what we will return: `total` is what makes "showing
+        // 2000 of 41823" possible instead of a listing that quietly lies.
+        if entries.len() >= MAX_ENTRIES {
             continue;
         }
         let metadata = match item.metadata() {
@@ -107,6 +132,7 @@ pub fn list(root: &Path, path: &Path, show_noisy: bool) -> Result<Vec<Entry>, Tr
         });
     }
 
+    let truncated = total > entries.len();
     entries.sort_by(|left, right| {
         let left_dir = left.kind == EntryKind::Directory;
         let right_dir = right.kind == EntryKind::Directory;
@@ -114,7 +140,11 @@ pub fn list(root: &Path, path: &Path, show_noisy: bool) -> Result<Vec<Entry>, Tr
             .cmp(&left_dir)
             .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
     });
-    Ok(entries)
+    Ok(Listing {
+        entries,
+        total,
+        truncated,
+    })
 }
 
 /// Read a text file for preview, with the encoding it was actually in.
@@ -163,10 +193,10 @@ mod tests {
     #[test]
     fn lists_directories_first_and_hides_noise() {
         let root = scratch("list");
-        let entries = list(&root, &root, false).expect("list");
+        let listing = list(&root, &root, false).expect("list");
         let _ = std::fs::remove_dir_all(&root);
 
-        let names: Vec<&str> = entries.iter().map(|entry| entry.name.as_str()).collect();
+        let names: Vec<&str> = listing.entries.iter().map(|entry| entry.name.as_str()).collect();
         assert_eq!(names, vec!["src", "README.md"]);
         assert!(!names.contains(&"node_modules"));
     }
@@ -174,9 +204,9 @@ mod tests {
     #[test]
     fn noise_can_be_shown_on_request() {
         let root = scratch("noisy");
-        let entries = list(&root, &root, true).expect("list");
+        let listing = list(&root, &root, true).expect("list");
         let _ = std::fs::remove_dir_all(&root);
-        assert!(entries.iter().any(|entry| entry.name == "node_modules"));
+        assert!(listing.entries.iter().any(|entry| entry.name == "node_modules"));
     }
 
     #[test]
@@ -210,5 +240,44 @@ mod tests {
         let result = read_preview(&root, &root.join("big.txt"), 1024);
         let _ = std::fs::remove_dir_all(&root);
         assert!(matches!(result, Err(TreeError::TooLarge(_))));
+    }
+}
+
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+
+    fn flat_dir(name: &str, count: usize) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("dsh-cap-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("scratch");
+        for index in 0..count {
+            std::fs::write(path.join(format!("f{index:05}.txt")), b"x").expect("write");
+        }
+        path
+    }
+
+    #[test]
+    fn a_huge_directory_is_capped_and_says_so() {
+        // A build output folder is exactly this shape. Returning every entry turns one call
+        // into megabytes that no tree view can render.
+        let root = flat_dir("big", MAX_ENTRIES + 25);
+        let listing = list(&root, &root, false).expect("list");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(listing.entries.len(), MAX_ENTRIES);
+        assert!(listing.truncated);
+        assert_eq!(listing.total, MAX_ENTRIES + 25, "the real count is still reported");
+    }
+
+    #[test]
+    fn a_small_directory_is_not_truncated() {
+        let root = flat_dir("small", 3);
+        let listing = list(&root, &root, false).expect("list");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(listing.entries.len(), 3);
+        assert!(!listing.truncated);
+        assert_eq!(listing.total, 3);
     }
 }

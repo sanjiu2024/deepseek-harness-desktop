@@ -9,6 +9,30 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Performance — a directory listing is capped, and says so
+
+`fs_tree` returns at most 2000 entries plus `{total, truncated}`. A flat directory with tens of
+thousands of files is not hypothetical — a build output folder is exactly that — and returning
+every entry made one call into megabytes of JSON that no tree view can render. Reporting the
+truncation matters: a truncated listing that looks complete is worse than an error.
+
+### Performance — terminal input is queued, not written inline
+
+`pty_write` now hands bytes to a writer thread through a bounded queue (1024 chunks) instead of
+writing to the master from the Tauri command thread. A large paste used to block that thread
+until the shell drained its buffer, which the user experiences as the *window* freezing while the
+shell is merely busy. A producer faster than the shell gets an error rather than an unbounded
+buffer.
+
+### Verified
+
+```
+cargo test -p dsh-native --release → 12 + 4 pty (new: cap, huge-paste non-blocking)
+cargo test -p dsh-store  --release → 26 + 1 real-home
+front end                          → 84 (file-tree fixtures follow the new listing shape)
+cargo clippy --workspace --all-targets --release -D warnings → clean
+```
+
 ### Performance — terminal output is batched, not streamed raw
 
 `pty://data` used to fire once per `read`, so `cat` of a large file became thousands of JSON
