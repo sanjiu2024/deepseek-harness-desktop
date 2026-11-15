@@ -70,6 +70,9 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
           previous.includes(event.type) ? previous : [...previous, event.type],
         )
       }
+      // A turn that ended cannot still be waiting on us: any queued decision
+      // belongs to a tool call the kernel has already abandoned.
+      if (event.type === 'turn/end') setInteractions([])
       setChat((state) => reduceEvent(state, event))
     }).then((unlisten) => {
       if (cancelled) unlisten()
@@ -89,6 +92,23 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
   // With live chunks the last message is the assistant's from the first delta,
   // so the state has to come from the turn, not from the message list.
   const streaming = useMemo(() => chat.active !== null, [chat.active])
+
+  /**
+   * Call ids with a decision waiting on the user.
+   *
+   * Without this a blocked tool card is indistinguishable from a slow one: both
+   * say "running". One of them needs you, which is the entire reason the card is
+   * worth showing.
+   */
+  const awaiting = useMemo(() => {
+    const ids = new Set<string>()
+    for (const interaction of interactions) {
+      if (interaction.kind === 'approval' && interaction.callId !== undefined) {
+        ids.add(interaction.callId)
+      }
+    }
+    return ids
+  }, [interactions])
 
   /**
    * Answer the request in front and drop it from the queue.
@@ -139,6 +159,7 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
               key={`${message.id}-${message.seq}`}
               message={message}
               live={streaming && index === chat.messages.length - 1}
+              awaitingApproval={awaiting}
             />
           ))}
         </ol>

@@ -10,7 +10,16 @@ import { ToolCard } from './ToolCard.tsx'
  * a collapsible trace you can open, not a paragraph of the reply. Mixing them is
  * how a model's scratchpad ends up looking like its answer.
  */
-export function MessageRow({ message, live = false }: { message: Message; live?: boolean }) {
+export function MessageRow({
+  message,
+  live = false,
+  awaitingApproval = new Set<string>(),
+}: {
+  message: Message
+  live?: boolean
+  /** Call ids whose tool call is blocked on a decision the user has not made. */
+  awaitingApproval?: ReadonlySet<string>
+}) {
   const label = message.role === 'user' ? '你' : message.role === 'assistant' ? '助手' : '系统'
   const reasoning = message.parts.filter((part) => part.kind === 'reasoning')
   const answer = message.parts.filter((part) => part.kind === 'text')
@@ -39,7 +48,7 @@ export function MessageRow({ message, live = false }: { message: Message; live?:
       {message.tools.length > 0 && (
         <div className="flex flex-col gap-1.5">
           {message.tools.map((tool) => (
-            <ToolCard key={tool.callId} tool={tool} />
+            <ToolCard key={tool.callId} tool={tool} awaiting={awaitingApproval.has(tool.callId)} />
           ))}
         </div>
       )}

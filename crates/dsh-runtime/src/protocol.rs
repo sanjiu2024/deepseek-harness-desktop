@@ -290,3 +290,48 @@ mod tests {
         assert_eq!(error.message, "bad \"quoted\" text");
     }
 }
+
+#[cfg(test)]
+mod wire_shape_tests {
+    use super::*;
+
+    /// The front end switches on `kind`. If a variant ever stops carrying it, the
+    /// approval dialog silently never appears and the turn hangs — this pins it.
+    #[test]
+    fn a_request_serialises_with_a_kind_tag() {
+        let value = serde_json::to_value(Incoming::Request {
+            id: 7,
+            method: request::APPROVAL.to_owned(),
+            params: serde_json::json!({ "sessionId": "s", "toolName": "pwsh" }),
+        })
+        .expect("serialises");
+
+        assert_eq!(value["kind"], "request");
+        assert_eq!(value["id"], 7);
+        assert_eq!(value["method"], "approval/request");
+        assert_eq!(value["params"]["toolName"], "pwsh");
+    }
+
+    #[test]
+    fn a_notification_serialises_with_a_kind_tag() {
+        let value = serde_json::to_value(Incoming::Notification {
+            method: notification::SESSION_EVENT.to_owned(),
+            params: serde_json::json!({}),
+        })
+        .expect("serialises");
+
+        assert_eq!(value["kind"], "notification");
+    }
+
+    #[test]
+    fn a_response_serialises_with_a_kind_tag() {
+        let value = serde_json::to_value(Incoming::Response {
+            id: 1,
+            payload: ResponsePayload::Ok(serde_json::json!({})),
+        })
+        .expect("serialises");
+
+        assert_eq!(value["kind"], "response");
+        assert_eq!(value["payload"]["status"], "ok");
+    }
+}

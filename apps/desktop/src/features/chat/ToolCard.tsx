@@ -8,9 +8,9 @@ import type { ToolCall } from '@/lib/reducer.ts'
  * the user came for. The header carries enough to know what happened without
  * opening it — name, status, and the command's first line.
  */
-export function ToolCard({ tool }: { tool: ToolCall }) {
+export function ToolCard({ tool, awaiting = false }: { tool: ToolCall; awaiting?: boolean }) {
   const [open, setOpen] = useState(false)
-  const summary = toolSummary(tool)
+  const summary = awaiting ? '等待你批准' : toolSummary(tool)
   const detail = toolDetail(tool)
 
   return (
@@ -20,7 +20,7 @@ export function ToolCard({ tool }: { tool: ToolCall }) {
       className="border-border/70 rounded-md border"
     >
       <summary className="flex cursor-pointer items-center gap-2 px-2 py-1 text-xs select-none">
-        <StatusDot status={tool.status} />
+        <StatusDot status={tool.status} awaiting={awaiting} />
         <span className="font-mono font-semibold">{tool.name}</span>
         <span className="text-muted-foreground truncate">{summary}</span>
       </summary>
@@ -36,14 +36,19 @@ export function ToolCard({ tool }: { tool: ToolCall }) {
           </pre>
         )}
         {tool.output === null && (
-          <p className="text-muted-foreground px-3 py-2 text-[11px]">等待结果…</p>
+          <p className="text-muted-foreground px-3 py-2 text-[11px]">
+            {awaiting ? '内核在等你的决定 —— 见上方弹窗' : '等待结果…'}
+          </p>
         )}
       </div>
     </details>
   )
 }
 
-function StatusDot({ status }: { status: ToolCall['status'] }) {
+function StatusDot({ status, awaiting }: { status: ToolCall['status']; awaiting: boolean }) {
+  // A blocked call is not running: it is waiting on the user, and that is the one
+  // state worth interrupting for.
+  if (awaiting) return <span className="text-amber-400">?</span>
   if (status === 'error') return <span className="text-destructive">✗</span>
   if (status === 'ok') return <span className="text-green-500">✓</span>
   return <span className="text-muted-foreground animate-pulse">●</span>

@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-11-15
+
+A blocked tool no longer looks like a slow one.
+
+### Fixed
+
+- A tool card waiting on approval now says **等待你批准**, marks its status `?`, and explains
+  itself (`内核在等你的决定 —— 见上方弹窗`). Before, it read `执行中…` exactly like a call that
+  was simply taking a while — one of those needs the user and the other does not, which is the
+  entire reason the card is on screen.
+- A `turn/end` drops any queued decision. The kernel cannot still be waiting on a turn it has
+  closed, and leaving the queue populated would block the next modal forever.
+
+### Verified
+
+- Headless repro of the screenshot's prompt: the kernel **does** send `approval/request`
+  (`{sessionId, toolName, callId, reason}`) and answering `allowed-once` completes the turn —
+  2 calls, 2 results, `turn/end completed`. So the request reaches the client; the missing part
+  was the card saying so.
+- New Rust tests pin the wire shape the front end switches on: `kind` is `request` /
+  `notification` / `response`. If that tag ever disappears the approval dialog silently stops
+  appearing, and no type check would catch it.
+
 ## [0.7.0] — 2026-11-15
 
 Root cause found, and it was neither a handle nor a security driver.
