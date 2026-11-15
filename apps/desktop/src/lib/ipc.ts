@@ -90,6 +90,10 @@ export interface SettingsSnapshot {
   provider: string
   model: string
   hasCredential: boolean
+  /** Session to reopen on launch, when it still exists. */
+  lastSessionId: string | null
+  /** Root the file tree browses. */
+  workspace: string | null
 }
 
 /** One row of the workspace tree. */
@@ -125,6 +129,13 @@ export const ipc = {
     invoke<{ provider: string; model: string }>('kernel_route_switch', { provider, model }),
   kernelDiagnostics: (): Promise<string[]> => invoke<string[]>('kernel_diagnostics'),
   settingsGet: (): Promise<SettingsSnapshot> => invoke<SettingsSnapshot>('settings_get'),
+  settingsRememberSession: (id: string | null): Promise<void> =>
+    invoke<void>('settings_remember_session', { id }),
+  settingsSetWorkspace: (path: string): Promise<SettingsSnapshot> =>
+    invoke<SettingsSnapshot>('settings_set_workspace', { path }),
+  /** Store a provider key in provider.env; it never enters this process's environment. */
+  settingsSetSecret: (name: string, value: string): Promise<SettingsSnapshot> =>
+    invoke<SettingsSnapshot>('settings_set_secret', { name, value }),
   settingsSet: (provider: string, model: string): Promise<SettingsSnapshot> =>
     invoke<SettingsSnapshot>('settings_set', { provider, model }),
   fsTree: (path: string | null, showNoisy = false): Promise<TreeEntry[]> =>

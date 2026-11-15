@@ -118,7 +118,10 @@ async fn acquire(
             let cwd = cwd.clone();
             async move {
                 KernelClient::spawn(KernelConfig {
-                    node: std::env::var_os("DSH_NODE").map_or_else(|| "node".into(), Into::into),
+                    node: std::env::var_os("DSH_NODE")
+                        .map(Into::into)
+                        .or_else(|| crate::state::alongside_exe(if cfg!(windows) { "node.exe" } else { "node" }))
+                        .unwrap_or_else(|| "node".into()),
                     entry,
                     profile: "sdk".to_owned(),
                     patches: vec![patch_path()],
@@ -352,6 +355,8 @@ pub fn settings_get(state: State<'_, AppState>) -> SettingsSnapshot {
         provider: settings.provider,
         model: settings.model,
         has_credential: credential_present(),
+        last_session_id: settings.last_session_id,
+        workspace: settings.workspace,
     }
 }
 
@@ -367,12 +372,81 @@ pub fn settings_set(
     if provider.is_empty() || model.is_empty() {
         return Err("provider and model must not be empty".to_owned());
     }
-    Settings { provider, model }.save(&state.dsh_home)?;
-    Ok(SettingsSnapshot {
-        provider: Settings::load(&state.dsh_home).provider,
-        model: Settings::load(&state.dsh_home).model,
+    // Load, modify, save: constructing a fresh `Settings` here would silently erase the
+    // session and workspace fields the user set somewhere else.
+    let mut settings = Settings::load(&state.dsh_home);
+    settings.provider = provider;
+    settings.model = model;
+    settings.save(&state.dsh_home)?;
+    Ok(snapshot(&state.dsh_home))
+}
+
+/// Remember which session to reopen next launch.
+#[tauri::command]
+pub fn settings_remember_session(
+    state: State<'_, AppState>,
+    id: Option<String>,
+) -> Result<(), String> {
+    let mut settings = Settings::load(&state.dsh_home);
+    settings.last_session_id = id.map(|value| value.trim().to_owned()).filter(|value| !value.is_empty());
+    settings.save(&state.dsh_home)
+}
+
+/// Point the file tree at another root. Must be an existing directory.
+#[tauri::command]
+pub fn settings_set_workspace(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<SettingsSnapshot, String> {
+    let trimmed = path.trim();
+    let candidate = std::path::Path::new(trimmed);
+    if !candidate.is_dir() {
+        return Err(format!("not a directory: {trimmed}"));
+    }
+    let mut settings = Settings::load(&state.dsh_home);
+    // Absolute, or a relative path would mean something different on the next launch.
+    settings.workspace = Some(
+        std::fs::canonicalize(candidate)
+            .unwrap_or_else(|_| candidate.to_path_buf())
+            .to_string_lossy()
+            .into_owned(),
+    );
+    settings.save(&state.dsh_home)?;
+    Ok(snapshot(&state.dsh_home))
+}
+
+/// Store a provider key.
+///
+/// The value goes to `<dsh_home>/provider.env`, which is the file the kernel already reads,
+/// and it never enters this process's environment: exporting it here would leak it into every
+/// child process for the rest of the run.
+#[tauri::command]
+pub fn settings_set_secret(
+    state: State<'_, AppState>,
+    name: String,
+    value: String,
+) -> Result<SettingsSnapshot, String> {
+    let name = name.trim().to_owned();
+    let value = value.trim().to_owned();
+    if !name.chars().all(|character| character.is_ascii_uppercase() || character == '_') {
+        return Err(format!("not an environment variable name: {name}"));
+    }
+    if value.is_empty() {
+        return Err("the key must not be empty".to_owned());
+    }
+    state.write_secret(&name, &value)?;
+    Ok(snapshot(&state.dsh_home))
+}
+
+fn snapshot(home: &std::path::Path) -> SettingsSnapshot {
+    let settings = Settings::load(home);
+    SettingsSnapshot {
+        provider: settings.provider,
+        model: settings.model,
         has_credential: credential_present(),
-    })
+        last_session_id: settings.last_session_id,
+        workspace: settings.workspace,
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -382,6 +456,10 @@ pub struct SettingsSnapshot {
     pub model: String,
     /// True when some provider key is in the environment.
     pub has_credential: bool,
+    /// Session to reopen on launch, when it still exists.
+    pub last_session_id: Option<String>,
+    /// Root the file tree browses.
+    pub workspace: Option<String>,
 }
 
 /// Does any provider key exist in this process?
@@ -435,6 +513,9 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         session_search,
         settings_get,
         settings_set,
+        settings_remember_session,
+        settings_set_workspace,
+        settings_set_secret,
         session_rename,
         session_delete,
         session_export,

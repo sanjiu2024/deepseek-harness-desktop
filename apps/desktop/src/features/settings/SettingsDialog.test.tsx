@@ -3,7 +3,13 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { SettingsDialog } from './SettingsDialog.tsx'
 
-const base = { provider: 'opencode-go', model: 'deepseek-v4.1-flash', hasCredential: true }
+const base = {
+  provider: 'opencode-go',
+  model: 'deepseek-v4.1-flash',
+  hasCredential: true,
+  lastSessionId: null,
+  workspace: null,
+}
 
 describe('settings dialog', () => {
   it('shows the stored route', () => {

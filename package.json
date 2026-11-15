@@ -22,6 +22,9 @@
     "bridge:install": "node scripts/install-bridge.mjs",
     "dev:build": "node scripts/dev.mjs build",
     "handles": "node scripts/handles.mjs",
-    "kernel:slim": "node scripts/slim-kernel.mjs"
+    "kernel:slim": "node scripts/slim-kernel.mjs",
+    "smoke:app": "node scripts/smoke-app.mjs",
+    "bundle": "node scripts/bundle-kernel.mjs",
+    "bundle:apply": "node scripts/bundle-kernel.mjs --apply"
   }
 }

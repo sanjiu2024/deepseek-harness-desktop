@@ -9,6 +9,52 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Added — the engineering around the UI
+
+The window is somebody else's job now; everything a window needs to be *reliable* is here.
+
+- **Logs to a file** (`<dsh_home>/logs/desktop.log.YYYY-MM-DD`) alongside stderr, written
+  synchronously: a non-blocking appender loses its buffer when the process is killed, which is
+  the one case the log exists for. An unwritable directory degrades to stderr instead of
+  refusing to start.
+- **A dead kernel is visible and recoverable.** `kernel://exit` now reaches the chat: a banner
+  names the exit code and offers 重启内核, which re-initializes the session's route. Before this,
+  a crash looked exactly like a slow model — you typed, nothing happened, no error anywhere.
+- **`kernel_diagnostics` returns real stderr** again (it had been stubbed to an empty vector
+  during the pool refactor — my regression, not a design choice).
+- **Session restore**: the app reopens the conversation you were in, and remembers which one
+  that was. A session that no longer exists falls back to a new one, silently.
+- **`settings_set_secret`**: a key can be written from the UI into `provider.env` (owner-only
+  permissions on unix). It never enters the process environment, so it does not leak into every
+  child process spawned afterwards.
+- **`settings_set_workspace`**: the file tree can be pointed at another root, canonicalised and
+  validated as a directory.
+- **PTYs are closed on exit**, before the pool drains; an orphaned shell kept a console alive
+  past the window.
+- **`scripts/smoke-app.mjs`** — headless end-to-end: start the real binary with autostart, read
+  the **log file**, require three lines (`kernel_paths invoked`, `kernel_initialize ok`,
+  `session_list count=N`). No mouse: the two failures that actually shipped (blank window, kernel
+  never booting) are both visible without one.
+- **CI** (`.github/workflows/ci.yml`): `web` (typecheck, tests, build), `rust` (fmt, clippy
+  `-D warnings`, tests), `smoke` (fetch + slim the kernel, build, run the app).
+- **`pnpm bundle:apply`** assembles `dist-bundle/`: client + slimmed kernel + a Node runtime.
+  The app resolves `kernel/` and `node` beside its own executable, so the bundle runs on a
+  machine with no Node and no network. This is the honest answer to "5 MB installer": the
+  client is nothing without a kernel, and the kernel is 370 MB of JavaScript that needs Node.
+
+### Fixed while verifying
+
+- The smoke test asserted against `logs/desktop.log`, but the rolling appender writes
+  `desktop.log.2026-11-15` — it reported "no log" while the log sat there. It now takes the
+  newest matching file.
+- `clippy::items-after-test-module`: the `write_secret` impl had been appended below the test
+  module.
+
+### Still not done (recorded, not hidden)
+
+Installer signing, auto-update, and an actual `tauri build` run — the configuration exists and
+`dist-bundle/` is what it would package, but no installer has been produced or installed.
+
 ### Changed — the chat surface stopped being a prototype
 
 Everything here is about the ordinary act of reading an answer, which is where a client feels

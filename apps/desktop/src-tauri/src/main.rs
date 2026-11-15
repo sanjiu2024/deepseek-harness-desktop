@@ -10,14 +10,58 @@ use std::process::ExitCode;
 use state::AppState;
 use tauri::Manager;
 
-fn main() -> ExitCode {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                "dsh_desktop_app=debug,dsh_runtime=info,dsh_kernel=info,info".into()
-            }),
-        )
+/// Where the log file lives: the kernel home, beside sessions and settings.
+fn log_dir() -> std::path::PathBuf {
+    let home = std::env::var_os("DSH_DESKTOP_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| state::app_data_dir().join("dsh-home"));
+    home.join("logs")
+}
+
+/**
+ * stderr plus a daily-rotated file.
+ *
+ * The returned guard must be held for the life of the process; dropping it stops the writer
+ * thread and the last lines of a crash never reach the file — which is precisely the part
+ * anyone would want to read.
+ */
+fn init_tracing() {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
+
+    let filter = || {
+        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            "dsh_desktop_app=debug,dsh_runtime=info,dsh_kernel=info,info".into()
+        })
+    };
+
+    let dir = log_dir();
+    // Written synchronously on purpose. A non-blocking appender is faster and loses its buffer
+    // when the process is killed — which is exactly the case a log file exists for.
+    let file_layer = match std::fs::create_dir_all(&dir) {
+        Ok(()) => {
+            let appender = tracing_appender::rolling::daily(&dir, "desktop.log");
+            Some(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(appender))
+        }
+        // An unwritable log directory must not stop the app from starting.
+        Err(error) => {
+            eprintln!("cannot create {}: {error} — logging to stderr only", dir.display());
+            None
+        }
+    };
+
+    tracing_subscriber::registry()
+        .with(filter())
+        .with(tracing_subscriber::fmt::layer())
+        .with(file_layer)
         .init();
+
+}
+
+fn main() -> ExitCode {
+    // Logs go to stderr **and** to a file: a user reporting a problem cannot reproduce it with
+    // RUST_LOG set by hand, and without a file there is nothing to read after the fact.
+    init_tracing();
 
     // Create our own data directory before the window exists, so nothing in the
     // startup path depends on a directory appearing later.
@@ -76,6 +120,10 @@ fn main() -> ExitCode {
                 // A window close must not leave a Node process holding the
                 // session lock, or the next launch reports a corrupt store.
                 if let tauri::RunEvent::ExitRequested { .. } = event {
+                    // Shells first: a child process holding the console outlives the window
+                    // otherwise, and a second launch inherits the mess.
+                    handle.state::<workspace::Terminals>().close_all();
+
                     let state = handle.state::<AppState>();
                     // Every kernel in the pool, not just the visible one: a leftover process
                     // holds the session lock and the next launch calls it a corrupt store.

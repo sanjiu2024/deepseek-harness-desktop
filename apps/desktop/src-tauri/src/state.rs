@@ -56,6 +56,12 @@ pub fn dsh_home(data_dir: &std::path::Path) -> PathBuf {
 pub struct Settings {
     pub provider: String,
     pub model: String,
+    /// Session reopened on launch. Cleared when it no longer exists.
+    #[serde(default, rename = "lastSessionId")]
+    pub last_session_id: Option<String>,
+    /// Root of the tree the side panel browses; absent means the process cwd.
+    #[serde(default)]
+    pub workspace: Option<String>,
 }
 
 impl Default for Settings {
@@ -63,6 +69,8 @@ impl Default for Settings {
         Self {
             provider: "opencode-go".to_owned(),
             model: "deepseek-v4.1-flash".to_owned(),
+            last_session_id: None,
+            workspace: None,
         }
     }
 }
@@ -99,6 +107,17 @@ impl Settings {
     }
 }
 
+/// A path next to the executable, if this is a bundled build.
+///
+/// A distributed copy has `kernel/` and `node` beside the binary (see
+/// `scripts/bundle-kernel.mjs`). Resolving them relative to the exe is what makes the bundle
+/// self-contained: no PATH, no environment variables, no "install Node first".
+pub fn alongside_exe(name: &str) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let candidate = exe.parent()?.join(name);
+    candidate.exists().then_some(candidate)
+}
+
 pub struct AppState {
     /// Private kernel home. Never `~/.dsh` — that belongs to the user's CLI.
     pub dsh_home: PathBuf,
@@ -129,6 +148,8 @@ impl AppState {
         let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let kernel_dir = std::env::var_os("DSH_DESKTOP_KERNEL")
             .map(PathBuf::from)
+            // A bundled copy carries its kernel; a development checkout does not.
+            .or_else(|| alongside_exe("kernel"))
             .unwrap_or_else(|| repo.join("kernel"));
         let bridge_dir = std::env::var_os("DSH_DESKTOP_BRIDGE")
             .map(PathBuf::from)
@@ -141,8 +162,17 @@ impl AppState {
             .and_then(|value| value.parse().ok())
             .unwrap_or(3);
 
+        // Workspace: the setting wins, then the environment, then the process cwd. A
+        // workspace that has been deleted must not leave the app unable to start.
+        let workspace = Settings::load(&home)
+            .workspace
+            .map(PathBuf::from)
+            .filter(|path| path.is_dir())
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| home.clone());
+
         Self {
-            workspace: std::env::current_dir().unwrap_or_else(|_| home.clone()),
+            workspace,
             dsh_home: home.clone(),
             kernel_dir,
             bridge_dir,
@@ -249,6 +279,43 @@ fn bridge_package_name(dir: &std::path::Path) -> Result<String, String> {
         .ok_or_else(|| "bridge/package.json has no \"name\"".to_owned())
 }
 
+impl AppState {
+    /// Write one key into `provider.env`, replacing any existing line for it.
+    ///
+    /// Two reasons this is a file and not the environment: the kernel reads this file itself,
+    /// so a key written here survives a restart without this process re-exporting it; and
+    /// `set_var` would hand the secret to every child process spawned afterwards.
+    ///
+    /// The file is created with owner-only permissions where the platform has them. On Windows
+    /// the parent directory already sits under the user profile; tightening the ACL further
+    /// would need an `icacls` call per write, which is a decision for whoever owns the policy.
+    pub fn write_secret(&self, name: &str, value: &str) -> Result<(), String> {
+        std::fs::create_dir_all(&self.dsh_home).map_err(|error| error.to_string())?;
+        let path = self.dsh_home.join("provider.env");
+
+        let mut lines: Vec<String> = std::fs::read_to_string(&path)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| !line.trim_start().starts_with(&format!("{name}=")))
+            .map(str::to_owned)
+            .collect();
+        lines.push(format!("{name}={value}"));
+
+        std::fs::write(&path, format!("{}\n", lines.join("\n")))
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+
+        // The running kernels already have their environment; the next start picks this up.
+        Ok(())
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +366,8 @@ mod tests {
         Settings {
             provider: "deepseek-official".to_owned(),
             model: "deepseek-v4.1-pro".to_owned(),
+            last_session_id: Some("abc".to_owned()),
+            workspace: Some("D:/repo".to_owned()),
         }
         .save(&home)
         .expect("save");

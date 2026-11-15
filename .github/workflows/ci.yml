@@ -1,0 +1,79 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: front end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      # `--ignore-scripts` because this workflow never runs the app: it type-checks, tests and
+      # builds it. Native post-installs are for the rust and smoke jobs.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm --filter @dsh-desktop/app check
+      - run: pnpm --filter @dsh-desktop/app test
+      - run: pnpm --filter @dsh-desktop/app build
+
+  rust:
+    name: rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      # Tauri's Linux system dependencies. Without them the build fails in `wry`, which reads
+      # like a code error until you know this is the missing piece.
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --release -- -D warnings
+      # The kernel is not fetched here: its tests skip themselves without DSH_DESKTOP_HOME,
+      # so this job stays offline and fast.
+      - run: cargo test --workspace --release
+
+  smoke:
+    name: app smoke (real kernel)
+    runs-on: windows-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      # The kernel is fetched at the pinned version and slimmed by the script that verifies
+      # each removal by running a real turn. This job is the only one that needs either.
+      - run: pnpm kernel:fetch
+      - run: pnpm kernel:slim --apply
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+      - run: pnpm build
+      - run: cargo build --release -p dsh-desktop-app
+      # Asserts the three things that break first, without window automation: the bundled
+      # front end loads, the kernel handshakes, the store is read.
+      - run: node scripts/smoke-app.mjs

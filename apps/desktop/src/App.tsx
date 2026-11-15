@@ -17,6 +17,7 @@ import { ipc, type SessionSummary } from '@/lib/ipc.ts'
 export function App() {
   const [ready, setReady] = useState(false)
   const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID())
+  const [restored, setRestored] = useState(false)
   const [historyKey, setHistoryKey] = useState(0)
   const [refreshKey, setRefreshKey] = useState(0)
   const [sessions, setSessions] = useState<SessionSummary[]>([])
@@ -27,6 +28,29 @@ export function App() {
   const [theme, toggleTheme] = useTheme()
 
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), [])
+
+  /**
+   * Reopen the session you were in last time.
+   *
+   * Restoring *which* conversation is the difference between an app and a scratchpad — the
+   * list is right there, but needing to find your place again every launch is the thing that
+   * makes small tools annoying. A session that no longer exists silently falls back to new.
+   */
+  useEffect(() => {
+    if (!ready || restored) return
+    setRestored(true)
+    void (async () => {
+      const settings = await ipc.settingsGet().catch(() => null)
+      const remembered = settings?.lastSessionId ?? null
+      if (remembered === null) return
+      const exists = (await ipc.sessionList().catch(() => [])).some(
+        (session) => session.id === remembered,
+      )
+      if (!exists) return
+      setSessionId(remembered)
+      setHistoryKey((key) => key + 1)
+    })()
+  }, [ready, restored])
 
   useEffect(() => {
     if (!ready) return
@@ -50,13 +74,16 @@ export function App() {
   }, [])
 
   const openNew = () => {
-    setSessionId(crypto.randomUUID())
+    const id = crypto.randomUUID()
+    setSessionId(id)
     setHistoryKey((key) => key + 1)
+    void ipc.settingsRememberSession(null)
   }
 
   const open = (session: SessionSummary) => {
     setSessionId(session.id)
     setHistoryKey((key) => key + 1)
+    void ipc.settingsRememberSession(session.id)
   }
 
   const actions = useMemo<PaletteAction[]>(

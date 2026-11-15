@@ -163,3 +163,17 @@ pub fn fs_read(
     )
     .map_err(|error| error.to_string())
 }
+
+impl Terminals {
+    /// Stop every shell. Called on exit; a PTY left behind keeps a console alive after the
+    /// window is gone, and the next launch inherits it.
+    pub fn close_all(&self) {
+        let drained: Vec<Arc<Pty>> = {
+            let mut shells = self.shells.lock().expect("terminals lock");
+            shells.drain().map(|(_, pty)| pty).collect()
+        };
+        for pty in drained {
+            pty.close();
+        }
+    }
+}
