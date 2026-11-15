@@ -25,6 +25,9 @@
     "kernel:slim": "node scripts/slim-kernel.mjs",
     "smoke:app": "node scripts/smoke-app.mjs",
     "bundle": "node scripts/bundle-kernel.mjs",
-    "bundle:apply": "node scripts/bundle-kernel.mjs --apply"
+    "bundle:apply": "node scripts/bundle-kernel.mjs --apply",
+    "clean": "node scripts/clean.mjs",
+    "clean:apply": "node scripts/clean.mjs --apply",
+    "app:build": "cargo build --release -p dsh-desktop-app"
   }
 }

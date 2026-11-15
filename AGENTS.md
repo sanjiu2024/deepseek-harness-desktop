@@ -58,6 +58,29 @@ change — three layers, cheapest first:
 Never copy kernel source into this repository, and never edit `kernel/` by hand: the next
 `kernel:fetch` replaces it and the change vanishes silently.
 
+## Building when `target/` is locked
+
+Some processes on a Windows machine take a handle on freshly written executables — Tailscale,
+Wallpaper Engine, MIXLINE, and ComfyUI's Python have all done it here. The symptom is
+`LNK1104: cannot open file …/build/dsh-desktop-app/<hash>/out/dsh_desktop_app.exe`, and it is
+not a code error.
+
+Two rules:
+
+1. **Find out who holds it** before changing anything: `node scripts/handles.mjs <path>`
+   (`--kill` if it is ours; **never** kill a stranger's process — work around it).
+2. **Build somewhere else** rather than fighting the lock:
+
+   ```bash
+   CARGO_TARGET_DIR=D:/dsh-build-target cargo build --release -p dsh-desktop-app
+   CARGO_TARGET_DIR=D:/dsh-build-target pnpm smoke:app      # finds it automatically
+   ```
+
+   `scripts/smoke-app.mjs` looks in `$CARGO_TARGET_DIR/release` first, then `target/release`.
+
+Cleanup after a build experiment: `pnpm clean` (report) → `pnpm clean:apply` (remove).
+`target/debug` alone reaches 18 GB in this project; only `release` is ever shipped.
+
 ## Hard rules
 
 1. **Never vendor the kernel.** It is fetched by `scripts/fetch-kernel.mjs` into `kernel/`,
