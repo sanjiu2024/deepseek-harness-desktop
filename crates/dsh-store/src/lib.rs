@@ -145,9 +145,9 @@ impl SessionStore {
         let titles = SessionTitles::load(self.home());
         let mut out = Vec::new();
         for path in self.logs()? {
-            match read_session(&path) {
-                Ok((header, events)) => {
-                    let mut summary = summarize(&header, &events);
+            match read_header(&path) {
+                Ok(header) => {
+                    let mut summary = summarize_cheap(&header, &path);
                     if let Some(renamed) = titles.get(&summary.id) {
                         summary.title = renamed.to_owned();
                     }
@@ -267,24 +267,51 @@ impl SessionStore {
         Ok(())
     }
 
-    /// Delete a session from disk, with its directory.
+    /// Move a session out of the store, into `trash/`.
     ///
-    /// Destructive and irreversible: the caller must have confirmed it. Nothing else in the
-    /// store can remove a log, which is why this is the only `remove_dir_all` in the crate.
+    /// A deleted conversation is somebody's work, and "delete" in a UI is one keystroke away
+    /// from "I clicked the wrong row". Moving the directory keeps the decision recoverable:
+    /// the session disappears from every list, and the bytes are still there for whoever knows
+    /// where to look. `purge` is the irreversible one.
     pub fn delete(&self, id: &str) -> Result<(), StoreError> {
+        let dir = self.directory_of(id)?;
+        let trash = self.home().join("trash");
+        std::fs::create_dir_all(&trash)?;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|delta| delta.as_millis())
+            .unwrap_or_default();
+        // The stamp keeps two deletions of the same id apart, and survives a restore.
+        let target = trash.join(format!("{id}-{stamp}"));
+        std::fs::rename(&dir, &target)?;
+
+        // A rename would otherwise outlive the session it described.
+        let mut titles = SessionTitles::load(self.home());
+        titles.set(id, "").map_err(StoreError::Overlay)?;
+        Ok(())
+    }
+
+    /// Remove a session for good. Nothing recovers this.
+    pub fn purge(&self, id: &str) -> Result<(), StoreError> {
+        let dir = self.directory_of(id)?;
+        std::fs::remove_dir_all(dir)?;
+        let mut titles = SessionTitles::load(self.home());
+        titles.set(id, "").map_err(StoreError::Overlay)?;
+        Ok(())
+    }
+
+    /// The directory holding a session's log.
+    fn directory_of(&self, id: &str) -> Result<PathBuf, StoreError> {
         for path in self.logs()? {
             let Ok((header, _)) = read_session(&path) else {
                 continue;
             };
-            if header.id != id {
-                continue;
+            if header.id == id {
+                return path
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .ok_or_else(|| StoreError::NotFound(id.to_owned()));
             }
-            let dir = path.parent().ok_or_else(|| StoreError::NotFound(id.to_owned()))?;
-            std::fs::remove_dir_all(dir)?;
-            // A rename would otherwise outlive the session it described.
-            let mut titles = SessionTitles::load(self.home());
-            titles.set(id, "").map_err(StoreError::Overlay)?;
-            return Ok(());
         }
         Err(StoreError::NotFound(id.to_owned()))
     }
@@ -344,6 +371,23 @@ fn parse_log_name(name: &str) -> Option<u32> {
     rest.parse::<u32>().ok()
 }
 
+/// Read just the first line.
+fn read_header(path: &Path) -> Result<SessionHeader, StoreError> {
+    let raw = std::fs::read_to_string(path)?;
+    let first = raw
+        .lines()
+        .next()
+        .ok_or_else(|| StoreError::MissingHeader(path.display().to_string()))?;
+    let header: SessionHeader = serde_json::from_str(first)?;
+    if header.version != CURRENT_FORMAT_VERSION {
+        return Err(StoreError::UnsupportedFormat {
+            version: header.version,
+            path: path.display().to_string(),
+        });
+    }
+    Ok(header)
+}
+
 fn read_session(path: &Path) -> Result<(SessionHeader, Vec<SessionEvent>), StoreError> {
     let raw = std::fs::read_to_string(path)?;
     let mut lines = raw.lines().filter(|line| !line.trim().is_empty());
@@ -370,6 +414,80 @@ fn read_session(path: &Path) -> Result<(SessionHeader, Vec<SessionEvent>), Store
         }
     }
     Ok((header, events))
+}
+
+/// A summary is built without parsing the transcript.
+///
+/// Listing forty sessions used to mean deserialising every event in every file — the listing
+/// cost grew with the *content* instead of the count. Two changes: only lines whose text
+/// contains a marker are parsed at all, and "updated at" comes from the file's mtime, which is
+/// what the file system already knows.
+fn summarize_cheap(header: &SessionHeader, path: &Path) -> SessionSummary {
+    let mut title: Option<String> = None;
+    let mut updated_at = header.created_at;
+    let mut last_line = String::new();
+    let mut first_user: Option<String> = None;
+    let mut event_count = 0;
+
+    if let Ok(raw) = std::fs::read_to_string(path) {
+        for line in raw.lines().skip(1) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            event_count += 1;
+            // Substring first, JSON second: most lines are neither of these two kinds.
+            if title.is_none()
+                && line.contains("session/title")
+                && let Ok(event) = serde_json::from_str::<SessionEvent>(line)
+            {
+                title = event
+                    .data
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+            }
+            last_line.clear();
+            last_line.push_str(line);
+            if first_user.is_none()
+                && line.contains("user/message")
+                && let Ok(event) = serde_json::from_str::<SessionEvent>(line)
+            {
+                let authored = event
+                    .data
+                    .get("source")
+                    .and_then(|source| source.get("kind"))
+                    .and_then(serde_json::Value::as_str)
+                    .is_none_or(|kind| kind == "user");
+                if authored {
+                    first_user = content_text(&event.data)
+                        .map(|text| text.trim().to_owned())
+                        .filter(|text| !text.is_empty());
+                }
+            }
+        }
+    }
+
+    // The last row's timestamp is the honest "updated at": file mtime moves when anything
+    // touches the file, including a tool we have no interest in.
+    if let Ok(event) = serde_json::from_str::<SessionEvent>(&last_line) {
+        updated_at = updated_at.max(event.time);
+    }
+
+    let title = title
+        .or(first_user)
+        .unwrap_or_else(|| header.id.clone());
+
+    SessionSummary {
+        id: header.id.clone(),
+        title: shorten(&title, 80),
+        cwd: header.cwd.clone(),
+        created_at: header.created_at,
+        updated_at,
+        event_count,
+        is_subagent: header.origin.as_deref() == Some("subagent")
+            || header.parent_session.is_some(),
+        parent_id: header.parent_session.clone(),
+    }
 }
 
 fn summarize(header: &SessionHeader, events: &[SessionEvent]) -> SessionSummary {
@@ -784,5 +902,64 @@ mod contains_tests {
 
         assert!(found);
         assert!(!missing);
+    }
+}
+
+#[cfg(test)]
+mod trash_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("dsh-trash-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).ok();
+        root
+    }
+
+    fn write_session(root: &Path, id: &str) {
+        let dir = root.join(SESSIONS_DIR).join("--p--").join(id);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(
+            dir.join("session.v4.jsonl"),
+            format!(
+                r#"{{"type":"session","version":4,"id":"{id}","createdAt":1,"isSeeded":false,"delegationDepth":0}}"#
+            ),
+        )
+        .expect("write");
+    }
+
+    #[test]
+    fn delete_moves_the_session_to_trash_instead_of_erasing_it() {
+        // "Delete" is one keystroke away from "I clicked the wrong row". The bytes stay.
+        let root = scratch("delete");
+        write_session(&root, "a");
+        let store = SessionStore::new(&root);
+
+        store.delete("a").expect("delete");
+        let listed = store.list().expect("list");
+        let trashed = std::fs::read_dir(root.join("trash"))
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(listed.is_empty(), "gone from every list");
+        assert_eq!(trashed, 1, "but still on disk, under trash/");
+    }
+
+    #[test]
+    fn purge_is_the_irreversible_one() {
+        let root = scratch("purge");
+        write_session(&root, "a");
+        let store = SessionStore::new(&root);
+
+        store.purge("a").expect("purge");
+        let listed = store.list().expect("list");
+        let trashed = std::fs::read_dir(root.join("trash"))
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(listed.is_empty());
+        assert_eq!(trashed, 0, "purge leaves nothing behind");
     }
 }

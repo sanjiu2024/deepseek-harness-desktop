@@ -520,6 +520,7 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         settings_set_secret,
         session_rename,
         session_delete,
+        session_purge,
         session_export,
         session_export_to,
         kernel_stop,
@@ -552,6 +553,15 @@ pub fn session_delete(state: State<'_, AppState>, id: String) -> Result<(), Stri
     tracing::info!(target: "dsh_desktop_app", %id, "session_delete");
     dsh_store::SessionStore::new(&state.dsh_home)
         .delete(&id)
+        .map_err(|error| error.to_string())
+}
+
+/// Remove a session for good. Nothing recovers this — `session_delete` only moves it to trash.
+#[tauri::command]
+pub fn session_purge(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    tracing::warn!(target: "dsh_desktop_app", %id, "session_purge");
+    dsh_store::SessionStore::new(&state.dsh_home)
+        .purge(&id)
         .map_err(|error| error.to_string())
 }
 

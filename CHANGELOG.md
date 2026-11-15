@@ -9,6 +9,41 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Changed — deleting a session is recoverable
+
+- `session_delete` now **renames the directory into `trash/<id>-<timestamp>/`** instead of
+  removing it. A delete button sits one keystroke away from "I clicked the wrong row", and a
+  rename is reversible. `session_purge` is the irreversible one, and belongs behind a second
+  confirmation.
+- The trash has **no auto-emptying and no restore command** on purpose: restoring is moving the
+  directory back, and a recycle bin that empties itself is not one.
+- A rename of the deleted session is cleared too, so it cannot outlive the session it described.
+
+### Added — a panic is now in the log
+
+A windowed application has no visible stderr: a panic in a command thread disappears and the
+user reports "it froze". `std::panic::set_hook` sends it through `tracing::error` with the
+location, so it lands in the same file as the events that led to it.
+
+### Changed — logging does not grow without bound
+
+Logs older than 14 days are removed at startup: enough to answer "what happened last week",
+short of becoming a second disk-full problem.
+
+### Performance — listing no longer parses every transcript
+
+`session_list` used to deserialise **every event in every file**; the cost grew with the content
+instead of the count. It now reads only the header and parses a line only when the raw text
+contains `session/title` or `user/message`, taking "updated at" from the last row's timestamp.
+
+### Verified
+
+```
+cargo test -p dsh-store --release   → 21 + 1 real-home  (2 new: trash, purge)
+cargo clippy --workspace --all-targets --release -D warnings → clean
+pnpm smoke:app                      → ok, 7.6s
+```
+
 ### Fixed — a crashed kernel was invisible to every layer
 
 Nothing was watching the child process. `exited` only ever fired from `shutdown`, so when the

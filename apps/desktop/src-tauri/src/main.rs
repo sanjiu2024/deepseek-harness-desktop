@@ -58,10 +58,59 @@ fn init_tracing() {
 
 }
 
+/**
+ * Send panics through `tracing` as well as stderr.
+ *
+ * A windowed application has no visible stderr: a panic in a command thread disappears and the
+ * user reports "it froze". Writing it through the same logger puts it in the log file, next to
+ * the events that led to it.
+ */
+fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|location| format!("{}:{}", location.file(), location.line()))
+            .unwrap_or_else(|| "unknown".to_owned());
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_owned())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic payload".to_owned());
+        tracing::error!(target: "dsh_desktop_app", %location, %message, "panic");
+        previous(info);
+    }));
+}
+
+/** Keep the log directory from growing without bound. */
+fn prune_logs(keep_days: u64) {
+    let dir = log_dir();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(keep_days * 86_400))
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+    for entry in entries.flatten() {
+        let modified = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        if modified < cutoff {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 fn main() -> ExitCode {
     // Logs go to stderr **and** to a file: a user reporting a problem cannot reproduce it with
     // RUST_LOG set by hand, and without a file there is nothing to read after the fact.
     init_tracing();
+    install_panic_hook();
+    // Fourteen days is enough to answer "what happened last week" without becoming a second
+    // disk-full problem.
+    prune_logs(14);
 
     // Create our own data directory before the window exists, so nothing in the
     // startup path depends on a directory appearing later.

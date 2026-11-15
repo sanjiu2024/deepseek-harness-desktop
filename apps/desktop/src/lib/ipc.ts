@@ -155,7 +155,10 @@ export const ipc = {
     invoke<SearchHit[]>('session_search', { query, limit }),
   sessionRename: (id: string, title: string): Promise<void> =>
     invoke<void>('session_rename', { id, title }),
+  /** Move a session to trash/ — recoverable. */
   sessionDelete: (id: string): Promise<void> => invoke<void>('session_delete', { id }),
+  /** Remove a session for good. Nothing recovers this. */
+  sessionPurge: (id: string): Promise<void> => invoke<void>('session_purge', { id }),
   sessionExport: (id: string): Promise<string> => invoke<string>('session_export', { id }),
   sessionExportTo: (id: string, path: string): Promise<void> =>
     invoke<void>('session_export_to', { id, path }),
