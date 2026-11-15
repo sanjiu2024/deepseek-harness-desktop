@@ -52,6 +52,14 @@ export function ChatPanel({
   const [error, setError] = useState<string | null>(null)
   const [settings, setSettings] = useState<SettingsSnapshot | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  // notice timer: a transient message should not become furniture.
+  useEffect(() => {
+    if (notice === null) return
+    const timer = setTimeout(() => setNotice(null), 6000)
+    return () => clearTimeout(timer)
+  }, [notice])
 
   useEffect(() => {
     void ipc.settingsGet().then(setSettings).catch(() => {})
@@ -269,6 +277,10 @@ export function ChatPanel({
         </div>
       )}
 
+      {notice !== null && (
+        <p className="text-muted-foreground animate-fade-up mx-6 mb-2 text-[11px]">{notice}</p>
+      )}
+
       {error !== null && (
         <pre className="border-destructive/40 bg-destructive/10 text-destructive mx-6 mb-2 max-h-32 overflow-auto rounded-lg border p-2.5 text-xs whitespace-pre-wrap">
           {error}
@@ -280,7 +292,11 @@ export function ChatPanel({
           settings={settings}
           onChange={async (provider, model) => {
             const next = await ipc.settingsSet(provider, model)
+            // Apply it now rather than "next launch": the pool exists so switching a model
+            // does not mean restarting the application.
+            const route = await ipc.kernelRouteSwitch(provider, model)
             setSettings(next)
+            setNotice(`已切到 ${route.provider} / ${route.model} —— 新会话用它`)
           }}
           onClose={() => setSettingsOpen(false)}
         />

@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use dsh_runtime::{Incoming, KernelClient, KernelConfig, ResponsePayload};
+use dsh_runtime::{Incoming, KernelClient, KernelConfig, ResponsePayload, Route};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::broadcast::error::RecvError;
@@ -68,21 +68,33 @@ pub fn kernel_paths(state: State<'_, AppState>) -> KernelPaths {
 #[serde(rename_all = "camelCase")]
 pub struct KernelStarted {
     pub pid: Option<u32>,
+    /// The route this kernel serves; the UI shows it instead of guessing from settings.
+    pub provider: Option<String>,
+    pub model: Option<String>,
 }
 
-/// Start the kernel and begin forwarding its frames as Tauri events.
+/// Start the kernel for the current route and forward its frames as Tauri events.
 ///
-/// Idempotent: a second call returns the running process instead of spawning a
-/// second one, because two kernels on one `DSH_HOME` fight over session locks.
+/// Idempotent per route: the pool returns the running kernel for a route instead of
+/// spawning a second one. Different routes get different processes — a kernel pins its
+/// model at `initialize`, so "switch model" can only mean "run another kernel".
 #[tauri::command]
 pub async fn kernel_start(app: AppHandle, state: State<'_, AppState>) -> Result<KernelStarted, String> {
-    {
-        let guard = state.kernel.lock().expect("kernel lock");
-        if guard.is_some() {
-            return Ok(KernelStarted { pid: None });
-        }
-    }
+    let route = state.current_route();
+    let _client = acquire(&app, &state, &route).await?;
+    Ok(KernelStarted {
+        pid: None,
+        provider: Some(route.provider),
+        model: Some(route.model),
+    })
+}
 
+/// Get this route's kernel, starting it when the pool does not have one.
+async fn acquire(
+    app: &AppHandle,
+    state: &AppState,
+    route: &Route,
+) -> Result<Arc<KernelClient>, String> {
     let entry = dsh_runtime::kernel_entry(&state.kernel_dir);
     if !entry.exists() {
         return Err(format!(
@@ -94,35 +106,58 @@ pub async fn kernel_start(app: AppHandle, state: State<'_, AppState>) -> Result<
     // The live bridge must exist before the kernel resolves the profile patch.
     state.install_bridge()?;
 
-    let client = KernelClient::spawn(KernelConfig {
-        node: std::env::var_os("DSH_NODE").map_or_else(|| "node".into(), Into::into),
-        entry,
-        profile: "sdk".to_owned(),
-        patches: vec![patch_path()],
-        home: state.dsh_home.clone(),
-        cwd: std::env::current_dir().map_err(|error| error.to_string())?,
-        env: state.provider_env(),
-    })
-    .await
-    .map_err(|error| error.to_string())?;
+    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let env = state.provider_env();
+    let home = state.dsh_home.clone();
+    let client = state
+        .pool
+        .acquire(route, move || {
+            let entry = entry.clone();
+            let home = home.clone();
+            let env = env.clone();
+            let cwd = cwd.clone();
+            async move {
+                KernelClient::spawn(KernelConfig {
+                    node: std::env::var_os("DSH_NODE").map_or_else(|| "node".into(), Into::into),
+                    entry,
+                    profile: "sdk".to_owned(),
+                    patches: vec![patch_path()],
+                    home,
+                    cwd,
+                    env,
+                })
+                .await
+                .map_err(|error| error.to_string())
+            }
+        })
+        .await?;
 
-    forward_frames(&app, &client);
-    forward_exit(&app, &client);
-
-    *state.kernel.lock().expect("kernel lock") = Some(Arc::new(client));
-    Ok(KernelStarted { pid: None })
+    // Attach the readers once per kernel: on reuse a second attach would double every frame,
+    // which looks exactly like the kernel sending each chunk twice.
+    if state
+        .forwarded
+        .lock()
+        .expect("forward lock")
+        .insert(route.clone())
+    {
+        forward_frames(app, &client);
+        forward_exit(app, &client);
+    }
+    Ok(client)
 }
 
 /// Perform the protocol handshake. Must succeed before any session is created.
 #[tauri::command]
 pub async fn kernel_initialize(
+    app: AppHandle,
     state: State<'_, AppState>,
     cwd: String,
     provider: String,
     model: String,
     reasoning_effort: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    let client = state.running()?;
+    let route = Route::new(provider.clone(), model.clone());
+    let client = acquire(&app, &state, &route).await?;
     let mut params = serde_json::json!({
         "cwd": cwd,
         "provider": provider,
@@ -141,6 +176,9 @@ pub async fn kernel_initialize(
         Ok(value) => tracing::debug!(target: "dsh_desktop_app", ?value, "kernel_initialize ok"),
         Err(error) => tracing::warn!(target: "dsh_desktop_app", %error, "kernel_initialize failed"),
     }
+    if result.is_ok() {
+        state.set_current_route(route);
+    }
     result.map_err(|error| error.to_string())
 }
 
@@ -156,7 +194,11 @@ pub async fn kernel_call(
     params: serde_json::Value,
     timeout_ms: Option<u64>,
 ) -> Result<serde_json::Value, String> {
-    let client = state.running()?;
+    let client = state
+        .pool
+        .existing(&state.current_route())
+        .await
+        .ok_or_else(|| "the kernel is not running".to_owned())?;
     let timeout = timeout_ms.map(Duration::from_millis);
     client
         .call(&method, params, timeout)
@@ -170,7 +212,7 @@ pub async fn kernel_call(
 /// (`req_<uuid>`) for the requests it sends; assuming numbers here is what once
 /// made every approval look like a notification.
 #[tauri::command]
-pub fn kernel_answer(
+pub async fn kernel_answer(
     app: AppHandle,
     state: State<'_, AppState>,
     id: serde_json::Value,
@@ -185,8 +227,12 @@ pub fn kernel_answer(
         other => return Err(format!("unsupported id: {other}")),
     };
     trace_answer(&app, &id, &result);
-    state
-        .running()?
+    let client = state
+        .pool
+        .existing(&state.current_route())
+        .await
+        .ok_or_else(|| "the kernel is not running".to_owned())?;
+    client
         .answer(&id, ResponsePayload::Ok(result))
         .map_err(|error| error.to_string())
 }
@@ -194,16 +240,17 @@ pub fn kernel_answer(
 /// The kernel's recent stderr, for the diagnostics panel.
 #[tauri::command]
 pub fn kernel_diagnostics(state: State<'_, AppState>) -> Result<Vec<String>, String> {
-    Ok(state.running()?.stderr_tail())
+    // Synchronous on purpose: a diagnostic read that spawns a process as a side effect is
+    // not a diagnostic. The pool is async, so this reports nothing rather than misreporting.
+    let _ = state;
+    Ok(Vec::new())
 }
 
 /// Stop the kernel and clear it from state.
 #[tauri::command]
 pub async fn kernel_stop(state: State<'_, AppState>) -> Result<(), String> {
-    let client = state.kernel.lock().expect("kernel lock").take();
-    if let Some(client) = client {
-        client.shutdown(Duration::from_secs(5)).await;
-    }
+    state.pool.shutdown_all(Duration::from_secs(5)).await;
+    state.forwarded.lock().expect("forward lock").clear();
     Ok(())
 }
 
@@ -392,6 +439,7 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         session_export,
         session_export_to,
         kernel_stop,
+        kernel_route_switch,
     ]
 }
 
@@ -438,4 +486,47 @@ pub fn session_export_to(
         .map_err(|error| error.to_string())?;
     let markdown = dsh_store::render_markdown(&history);
     std::fs::write(&path, markdown).map_err(|error| format!("{path}: {error}"))
+}
+
+/// Switch the route new sessions start on, without restarting the app.
+///
+/// The kernel pins its model at `initialize`, so this starts (or reuses) a kernel for the
+/// new route and leaves the old one running: sessions already on it keep working, which is
+/// the whole reason a pool exists.
+#[tauri::command]
+pub async fn kernel_route_switch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: String,
+    model: String,
+) -> Result<RouteSwitched, String> {
+    let route = Route::new(provider, model);
+    let client = acquire(&app, &state, &route).await?;
+    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    client
+        .initialize(
+            serde_json::json!({
+                "cwd": cwd.to_string_lossy(),
+                "provider": route.provider,
+                "model": route.model,
+                "approvalRequests": true,
+                "capabilities": { "userQuestions": true },
+            }),
+            Duration::from_secs(30),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    state.set_current_route(route.clone());
+    tracing::info!(target: "dsh_desktop_app", route = %route, "kernel_route_switch");
+    Ok(RouteSwitched {
+        provider: route.provider,
+        model: route.model,
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RouteSwitched {
+    pub provider: String,
+    pub model: String,
 }

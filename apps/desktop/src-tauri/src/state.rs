@@ -5,9 +5,9 @@
 //! that must agree.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
-use dsh_runtime::KernelClient;
+use dsh_runtime::{KernelPool, Route};
 
 /// The app data directory for this build: `%APPDATA%\<identifier>`.
 ///
@@ -106,8 +106,13 @@ pub struct AppState {
     pub kernel_dir: PathBuf,
     /// The kernel-side live bridge source, copied into the kernel home at start.
     pub bridge_dir: PathBuf,
-    /// The running kernel, if any. `None` means nothing has been started yet.
-    pub kernel: Mutex<Option<Arc<KernelClient>>>,
+    /// One kernel per route. See `dsh_runtime::pool` for why a route needs its own process.
+    pub pool: KernelPool,
+    /// Routes whose frame readers are already attached, so a reused kernel does not get a
+    /// second set of forwarders and emit every event twice.
+    pub forwarded: Mutex<std::collections::HashSet<Route>>,
+    /// The route new sessions start on: the last one initialized, else the settings file.
+    pub route: Mutex<Route>,
 }
 
 impl AppState {
@@ -127,11 +132,23 @@ impl AppState {
             .map(PathBuf::from)
             .unwrap_or_else(|| repo.join("bridge"));
 
+        // Three kernels is a working set, not a limit on models: a route whose sessions are
+        // still open is never evicted, so the pool grows rather than ending a conversation.
+        let capacity = std::env::var("DSH_DESKTOP_POOL_SIZE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(3);
+
         Self {
-            dsh_home: home,
+            dsh_home: home.clone(),
             kernel_dir,
             bridge_dir,
-            kernel: Mutex::new(None),
+            pool: KernelPool::new(capacity),
+            forwarded: Mutex::new(std::collections::HashSet::new()),
+            route: Mutex::new(Route::new(
+                Settings::load(&home).provider,
+                Settings::load(&home).model,
+            )),
         }
     }
 
@@ -159,12 +176,15 @@ impl AppState {
     }
 
     /// The running kernel, or an error the front end can show.
-    pub fn running(&self) -> Result<Arc<KernelClient>, String> {
-        self.kernel
-            .lock()
-            .expect("kernel lock")
-            .clone()
-            .ok_or_else(|| "the kernel is not running".to_owned())
+    /// The route new sessions should use.
+    pub fn current_route(&self) -> Route {
+        self.route.lock().expect("route lock").clone()
+    }
+
+    /// Point new sessions at a different route. Existing sessions keep their own kernel, so
+    /// this changes what happens *next*, never what is already running.
+    pub fn set_current_route(&self, route: Route) {
+        *self.route.lock().expect("route lock") = route;
     }
 
     /// Provider keys for the kernel process.

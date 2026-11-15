@@ -97,6 +97,14 @@ export const ipc = {
   kernelPaths: (): Promise<KernelPaths> => invoke<KernelPaths>('kernel_paths'),
   kernelStart: (): Promise<void> => invoke<void>('kernel_start'),
   kernelStop: (): Promise<void> => invoke<void>('kernel_stop'),
+  /**
+   * Point new sessions at another route without restarting the app.
+   *
+   * A kernel pins its model at initialize, so this starts a second kernel and leaves the
+   * first running — sessions already on it keep working.
+   */
+  kernelRouteSwitch: (provider: string, model: string): Promise<{ provider: string; model: string }> =>
+    invoke<{ provider: string; model: string }>('kernel_route_switch', { provider, model }),
   kernelDiagnostics: (): Promise<string[]> => invoke<string[]>('kernel_diagnostics'),
   settingsGet: (): Promise<SettingsSnapshot> => invoke<SettingsSnapshot>('settings_get'),
   settingsSet: (provider: string, model: string): Promise<SettingsSnapshot> =>

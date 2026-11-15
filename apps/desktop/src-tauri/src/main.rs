@@ -75,12 +75,11 @@ fn main() -> ExitCode {
                 // session lock, or the next launch reports a corrupt store.
                 if let tauri::RunEvent::ExitRequested { .. } = event {
                     let state = handle.state::<AppState>();
-                    let client = state.kernel.lock().expect("kernel lock").take();
-                    if let Some(client) = client {
-                        tauri::async_runtime::block_on(async move {
-                            client.shutdown(std::time::Duration::from_secs(3)).await;
-                        });
-                    }
+                    // Every kernel in the pool, not just the visible one: a leftover process
+                    // holds the session lock and the next launch calls it a corrupt store.
+                    tauri::async_runtime::block_on(async {
+                        state.pool.shutdown_all(std::time::Duration::from_secs(3)).await;
+                    });
                 }
             });
             ExitCode::SUCCESS

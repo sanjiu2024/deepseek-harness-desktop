@@ -9,6 +9,33 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Added — more than one model at a time
+
+- **Kernel pool** (`crates/dsh-runtime/src/pool.rs`): one kernel per route, started lazily,
+  reused when a route is asked for twice, and evicted only when it has **no sessions bound** —
+  the pool would rather grow than end a conversation the sidebar still lists.
+- `kernel_route_switch`: changing the model in settings now applies immediately instead of
+  "next launch". The old kernel keeps running, so the session already open on it keeps working;
+  the new route serves the next session. That is the whole reason a pool exists, and it is why
+  the notice says *新会话用它* rather than pretending the current turn changed.
+- Frame readers attach once per kernel: a reused kernel with a second reader would emit every
+  chunk twice, which is indistinguishable from a kernel bug.
+- Exit now drains the whole pool — a leftover kernel holds the session lock and the next launch
+  calls it a corrupt store.
+
+### Verified with real kernels
+
+`crates/dsh-runtime/tests/pool.rs` starts two actual kernel processes and asserts the
+properties that matter:
+
+```
+$ DSH_DESKTOP_HOME=… DSH_DESKTOP_KERNEL=… cargo test -p dsh-runtime --test pool
+test two_routes_get_two_kernels_and_one_route_is_reused ... ok   (6.14s)
+```
+
+Same route → the same `Arc<KernelClient>`; different route → a different process; a session
+binds to its route and resolves back to it; shutdown clears the pool.
+
 ### Added — sessions are manageable, and the app has a keyboard
 
 - **Rename** (✎ or double-click) and **delete** (× with a confirm step) in the sidebar. The
