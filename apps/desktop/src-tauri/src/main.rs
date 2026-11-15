@@ -26,6 +26,23 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    // Keep the WebView2 profile in our own directory rather than inheriting a
+    // default. Two reasons: the location is then something we control and can
+    // document, and on a machine with an aggressive security driver the default
+    // location has been observed unusable while an explicit one works.
+    //
+    // This is not a complete defence — see docs/句柄占用.md. A filter driver can
+    // refuse profile creation without holding any handle, which no handle query
+    // will report.
+    let profile = data_dir.join("EBWebView");
+    if let Err(error) = std::fs::create_dir_all(&profile) {
+        eprintln!("cannot create {}: {error}", profile.display());
+        return ExitCode::FAILURE;
+    }
+    // SAFETY: single-threaded here, before Tauri or any plugin starts a thread
+    // that reads the environment.
+    unsafe { std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &profile) };
+
     let result = tauri::Builder::default()
         // Registered first: the single-instance check must run before anything
         // that touches the WebView2 profile. Two processes on one profile is the

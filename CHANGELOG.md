@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] — 2026-11-15
+
+The blocking cause is a driver, not a handle — and no handle query can see it.
+
+### Found
+
+After the user installed 火绒, the failure persisted and the investigation reached a firm
+conclusion:
+
+- Every path with **zero holders**: exe, `target\debug`, and both WebView2 profile candidates
+  report `nothing is holding`.
+- The **same binary** runs from `%TEMP%`, `D:\cargo-test`, `D:\space test dir` (spaces are
+  irrelevant), `D:\deepseek harness desktop2` and `D:\dsh repo` — and fails from **every**
+  subdirectory of `D:\deepseek harness desktop`.
+- `--no-sandbox` for the Chromium renderer changes nothing.
+- 火绒's processes are running (`HipsDaemon`, `HipsMain`, `HipsTray`).
+
+A **filter driver** refuses the operation without holding a handle, which is why every handle
+tool came back empty. It keys on path, which is why a copy elsewhere works.
+
+### Changed
+
+- The WebView2 profile is now created and pinned by the app itself instead of inherited
+  (`WEBVIEW2_USER_DATA_FOLDER`), so its location is ours and documented. It is **not** a fix
+  for the driver-level block: verified failing after the change.
+- `docs/句柄占用.md` gained the second class of problem with the discriminating rule: **when
+  `handles.mjs` says nobody holds it and the program still will not start, stop querying
+  handles** — add a trust-zone exclusion (`D:\deepseek harness desktop`,
+  `%LOCALAPPDATA%\com.sanjiu2024.dsh-desktop`, `%APPDATA%\com.sanjiu2024.dsh-desktop`,
+  `%TEMP%`) and retry.
+
+### Not fixed
+
+The app still cannot start from inside this project directory on this machine. Nothing in the
+repository can change that: it is an exclusion-list configuration outside the code.
+
 ## [0.6.3] — 2026-11-15
 
 The handle tool grew a shared library, and the project directory turned out to be the poisoned
