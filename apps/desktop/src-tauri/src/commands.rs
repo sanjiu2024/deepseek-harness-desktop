@@ -161,6 +161,7 @@ pub async fn kernel_call(
 /// made every approval look like a notification.
 #[tauri::command]
 pub fn kernel_answer(
+    app: AppHandle,
     state: State<'_, AppState>,
     id: serde_json::Value,
     result: serde_json::Value,
@@ -173,6 +174,7 @@ pub fn kernel_answer(
         serde_json::Value::String(text) => dsh_runtime::FrameId::Text(text.clone()),
         other => return Err(format!("unsupported id: {other}")),
     };
+    trace_answer(&app, &id, &result);
     state
         .running()?
         .answer(&id, ResponsePayload::Ok(result))
@@ -238,6 +240,25 @@ fn emit(app: &AppHandle, frame: Incoming) {
             let _ = app.emit(KERNEL_EVENT, value);
         }
         Err(error) => tracing::warn!(target: "dsh_desktop_app", %error, "dropped an unserialisable frame"),
+    }
+}
+
+/// Append the answer to the same log, so "did we send it?" and "did the kernel
+/// take it?" stop being a guessing game.
+fn trace_answer(app: &AppHandle, id: &dsh_runtime::FrameId, result: &serde_json::Value) {
+    if std::env::var_os("DSH_DESKTOP_LOG_FRAMES").is_none() {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let path = state.dsh_home.join("frames.log");
+    let outcome = result
+        .get("outcome")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("-");
+    let line = format!("answer\t{id}\t{outcome}\n");
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        use std::io::Write;
+        let _ = file.write_all(line.as_bytes());
     }
 }
 

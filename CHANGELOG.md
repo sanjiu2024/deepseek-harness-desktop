@@ -4,6 +4,32 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] — 2026-11-15
+
+The frame log now records answers too, and the tool itself is confirmed healthy.
+
+### Added
+
+- `kernel_answer` appends `answer<TAB><id><TAB><outcome>` to the same `frames.log` when
+  `DSH_DESKTOP_LOG_FRAMES` is set. The log previously showed only what was forwarded to the
+  view, so "did we send the decision?" was unanswerable — the other half of the conversation was
+  invisible.
+
+### Confirmed
+
+- `approval/request` now arrives as a **request** in the log (it used to be logged as a
+  notification — that was 0.9.0's bug), so the dialog has something to open.
+- The `pwsh` tool is healthy on this machine: a fresh headless session ran
+  `$PSVersionTable.PSVersion.ToString()` and got `5.1.22621.2506` back with no approval needed.
+  So the ✗ rows in a turn are **sandbox denials that need an approval**, not a broken tool — and
+  a card still sitting at "执行中" after clicking allow is a separate question from the tool
+  being able to run at all.
+
+### Not yet established
+
+Whether the answer reaches the kernel after the button is clicked. That is exactly what the new
+log line will show, and it needs one more run from the UI.
+
 ## [0.9.0] — 2026-11-15
 
 The approval dialog never appeared because the client could not read the kernel's ids.
