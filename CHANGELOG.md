@@ -9,6 +9,27 @@ All notable changes to this project are documented here. The format loosely foll
 Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
 "Versions" in `AGENTS.md`.
 
+### Added — the kernel lost 383 MB without losing a feature
+
+- `pnpm kernel:slim` finds the packages the SDK profile never loads and proves each removal by
+  **running a real turn**: initialize, ask for a tool call, require `turn/end: completed`.
+  A handshake would pass with half the tools missing — the profile mounts its rows lazily, so
+  the first thing to break is a tool call.
+- Removed (all verified): `libreoffice-kit-win32-x64` (190 MB), `libreoffice-kit-wasm`
+  (145 MB), `sherpa-onnx-win-x64` (22 MB, speech input this client does not offer),
+  `dsh-web-frontend` (20 MB, the upstream Web GUI) and 62 copies of `dsh-client-ui-*`
+  (63 MB, one per peer set).
+- **753 MB → 370 MB.** `pnpm kernel:fetch` is the rollback: the pin rebuilds the tree, which
+  beats trusting a directory someone moved by hand.
+
+### The verification gate had the bug, not the pruning
+
+The first run reported every candidate as failed — including LibreOffice, which nothing in the
+SDK profile touches. The gate judged a turn complete when `session/prompt` was **accepted**;
+that call returns a message id immediately and the turn runs afterwards. It now waits for
+`turn/end`, and all five candidates verify. Worth writing down because "no completed turn"
+looks exactly like a pruning mistake.
+
 ### Added — a workspace panel: files and a real shell
 
 - `crates/dsh-native` stops being a stub. `tree` lists **one directory per call** and refuses

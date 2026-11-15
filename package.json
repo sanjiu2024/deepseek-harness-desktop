@@ -21,6 +21,7 @@
     "lint": "pnpm --filter @dsh-desktop/app lint",
     "bridge:install": "node scripts/install-bridge.mjs",
     "dev:build": "node scripts/dev.mjs build",
-    "handles": "node scripts/handles.mjs"
+    "handles": "node scripts/handles.mjs",
+    "kernel:slim": "node scripts/slim-kernel.mjs"
   }
 }
