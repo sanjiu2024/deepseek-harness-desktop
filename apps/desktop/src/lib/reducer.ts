@@ -25,11 +25,15 @@ export type Role = 'user' | 'assistant' | 'system'
 export interface MessagePart {
   kind: 'text' | 'reasoning'
   text: string
+  /** Sequence of the event that opened this part; ordering only. */
+  seq: number
 }
 
 export interface ToolCall {
   /** Provider call id, once the stream names one. */
   callId: string
+  /** Sequence of the event that opened this call; ordering only. */
+  seq: number
   name: string
   /** Raw JSON string; the kernel streams arguments as text. */
   arguments: string
@@ -163,7 +167,7 @@ function userMessage(event: SessionEvent): Message {
   return {
     id: asString(read(event.data, 'id')) ?? `user-${event.seq}`,
     role: 'user',
-    parts: [{ kind: 'text', text: contentText(event.data) ?? '' }],
+    parts: [{ kind: 'text', text: contentText(event.data) ?? '', seq: event.seq }],
     tools: [],
     time: event.time,
     seq: event.seq,
@@ -206,7 +210,7 @@ export function applyLiveChunk(state: ChatState, chunk: unknown, time = Date.now
         if (at === -1) {
           return [
             ...tools,
-            { callId, name: name ?? 'tool', arguments: delta, status: 'running', output: null },
+            { callId, seq: synthetic.seq, name: name ?? 'tool', arguments: delta, status: 'running', output: null },
           ]
         }
         return tools.map((tool, index) =>
@@ -247,7 +251,7 @@ function settleAssistantMessage(state: ChatState, event: SessionEvent): ChatStat
     const kind = asString(read(block, 'type'))
     const text = asString(read(block, 'text'))
     if (text === null) continue
-    if (kind === 'text' || kind === 'reasoning') parts.push({ kind, text })
+    if (kind === 'text' || kind === 'reasoning') parts.push({ kind, text, seq: event.seq })
   }
   if (parts.length === 0) return state
 
@@ -332,7 +336,7 @@ function appendText(
     messages.push({
       id: `assistant-${event.seq}`,
       role: 'assistant',
-      parts: [{ kind, text: delta }],
+      parts: [{ kind, text: delta, seq: event.seq }],
       tools: [],
       time: event.time,
       seq: event.seq,
@@ -340,11 +344,18 @@ function appendText(
     return { ...state, messages }
   }
 
-  const at = last.parts.findIndex((part) => part.kind === kind)
+  const trailing = last.parts.at(-1)
+  // A tool call that arrived after the trailing part ends it: thinking that
+  // resumes afterwards is a new block, not a continuation.
+  const lastTool = last.tools.at(-1)
+  const interruptedByTool =
+    trailing !== undefined && lastTool !== undefined && lastTool.seq > trailing.seq
   const parts =
-    at === -1
-      ? [...last.parts, { kind, text: delta }]
-      : last.parts.map((part, index) => (index === at ? { ...part, text: part.text + delta } : part))
+    trailing !== undefined && trailing.kind === kind && !interruptedByTool
+      ? last.parts.map((part, index) =>
+          index === last.parts.length - 1 ? { ...part, text: part.text + delta } : part,
+        )
+      : [...last.parts, { kind, text: delta, seq: event.seq }]
   messages[messages.length - 1] = { ...last, parts, seq: event.seq }
   return { ...state, messages }
 }
@@ -356,7 +367,7 @@ function replaceLastAssistant(state: ChatState, event: SessionEvent, text: strin
     messages.push({
       id: `assistant-${event.seq}`,
       role: 'assistant',
-      parts: [{ kind: 'text', text }],
+      parts: [{ kind: 'text', text, seq: event.seq }],
       tools: [],
       time: event.time,
       seq: event.seq,
@@ -366,7 +377,7 @@ function replaceLastAssistant(state: ChatState, event: SessionEvent, text: strin
   const others = last.parts.filter((part) => part.kind !== 'text')
   messages[messages.length - 1] = {
     ...last,
-    parts: [{ kind: 'text', text }, ...others],
+    parts: [{ kind: 'text', text, seq: event.seq }, ...others],
     seq: event.seq,
   }
   return { ...state, messages }
@@ -380,6 +391,7 @@ function appendTool(state: ChatState, event: SessionEvent): ChatState {
     // `arguments` arrives already serialised as a JSON string; re-encoding a
     // string would double-quote the whole payload.
     arguments: typeof raw === 'string' ? raw : JSON.stringify(raw ?? null),
+    seq: event.seq,
     status: 'running',
     output: null,
   }

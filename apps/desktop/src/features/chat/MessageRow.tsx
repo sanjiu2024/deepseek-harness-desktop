@@ -21,36 +21,42 @@ export function MessageRow({
   awaitingApproval?: ReadonlySet<string>
 }) {
   const label = message.role === 'user' ? '你' : message.role === 'assistant' ? '助手' : '系统'
+  // Arrival order, not type order.
+  //
+  // Grouping all reasoning into one block and all tool calls after it read as a
+  // single wall of thought followed by unrelated cards; the kernel actually
+  // interleaves think → call → think. Sorting by the sequence each block arrived
+  // at restores what happened.
+  const ordered = [
+    ...message.parts.map((part) => ({ kind: 'part' as const, seq: part.seq, part })),
+    ...message.tools.map((tool) => ({ kind: 'tool' as const, seq: tool.seq, tool })),
+  ]
+    .sort((left, right) => (left.seq === right.seq ? (left.kind === 'part' ? -1 : 1) : left.seq - right.seq))
+    .map((entry) => entry)
+
   const reasoning = message.parts.filter((part) => part.kind === 'reasoning')
-  const answer = message.parts.filter((part) => part.kind === 'text')
+  const hasAnswer = message.parts.some((part) => part.kind === 'text' && part.text !== '')
 
   return (
     <li className="flex flex-col gap-1.5">
       <span className="text-muted-foreground text-xs">{label}</span>
 
-      {reasoning.length > 0 && <ReasoningBlock parts={reasoning} live={live && answer.length === 0} />}
+      {reasoning.length > 0 && <ReasoningBlock parts={reasoning} live={live && !hasAnswer} />}
 
-      {answer.length > 0 &&
-        (message.role === 'user' ? (
-          <div className="text-sm leading-relaxed whitespace-pre-wrap select-text">
-            {answer.map((part, index) => (
-              <p key={index}>{part.text}</p>
-            ))}
+      {ordered.map((entry, index) =>
+        entry.kind === 'tool' ? (
+          <ToolCard
+            key={`tool-${entry.tool.callId}`}
+            tool={entry.tool}
+            awaiting={awaitingApproval.has(entry.tool.callId)}
+          />
+        ) : entry.part.kind === 'reasoning' ? null : message.role === 'user' ? (
+          <div key={index} className="text-sm leading-relaxed whitespace-pre-wrap select-text">
+            {entry.part.text}
           </div>
         ) : (
-          <div className="flex flex-col gap-3">
-            {answer.map((part, index) => (
-              <Markdown key={index} text={part.text} />
-            ))}
-          </div>
-        ))}
-
-      {message.tools.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          {message.tools.map((tool) => (
-            <ToolCard key={tool.callId} tool={tool} awaiting={awaitingApproval.has(tool.callId)} />
-          ))}
-        </div>
+          <Markdown key={index} text={entry.part.text} />
+        ),
       )}
     </li>
   )

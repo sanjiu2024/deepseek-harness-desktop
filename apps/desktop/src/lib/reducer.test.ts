@@ -96,7 +96,7 @@ describe('streaming deltas', () => {
       event('assistant/live-chunk', { chunk: { type: 'text-delta', index: 0, text: '!' } }),
     ])
     expect(state.messages).toHaveLength(2)
-    expect(state.messages[1]?.parts).toEqual([{ kind: 'text', text: 'Hello!' }])
+    expect(state.messages[1]?.parts).toMatchObject([{ kind: 'text', text: 'Hello!' }])
   })
 
   it('keeps reasoning apart from answer text', () => {
@@ -104,7 +104,7 @@ describe('streaming deltas', () => {
       event('assistant/live-chunk', { chunk: { type: 'reasoning-delta', index: 0, text: 'hmm' } }),
       event('assistant/live-chunk', { chunk: { type: 'text-delta', index: 1, text: 'answer' } }),
     ])
-    expect(state.messages[0]?.parts).toEqual([
+    expect(state.messages[0]?.parts).toMatchObject([
       { kind: 'reasoning', text: 'hmm' },
       { kind: 'text', text: 'answer' },
     ])
@@ -158,7 +158,7 @@ describe('durable attempt records', () => {
         stream: [{ chunk: { type: 'text-delta', index: 0, text: 'the full answer' } }],
       }),
     ])
-    expect(state.messages[1]?.parts).toEqual([{ kind: 'text', text: 'the full answer' }])
+    expect(state.messages[1]?.parts).toMatchObject([{ kind: 'text', text: 'the full answer' }])
   })
 
   it('surfaces a failure recorded inside the attempt stream', () => {
@@ -236,7 +236,7 @@ describe('live stream from the kernel-side bridge', () => {
       state = applyLiveChunk(state, { type: 'text-delta', index: 0, text })
     }
     expect(state.messages).toHaveLength(1)
-    expect(state.messages[0]?.parts).toEqual([{ kind: 'text', text: 'abc' }])
+    expect(state.messages[0]?.parts).toMatchObject([{ kind: 'text', text: 'abc' }])
   })
 
   it('keeps reasoning deltas in their own part', () => {
@@ -275,7 +275,7 @@ describe('reasoning survives the durable message', () => {
     state = reduceEvent(state, event('assistant/message', {
       message: { role: 'assistant', content: [{ type: 'text', text: '鸡 23 只，兔 12 只' }] },
     }))
-    expect(state.messages[0]?.parts).toEqual([
+    expect(state.messages[0]?.parts).toMatchObject([
       { kind: 'reasoning', text: '先算脚数' },
       { kind: 'text', text: '鸡 23 只，兔 12 只' },
     ])
@@ -293,7 +293,7 @@ describe('reasoning survives the durable message', () => {
         ],
       },
     }))
-    expect(state.messages[0]?.parts).toEqual([
+    expect(state.messages[0]?.parts).toMatchObject([
       { kind: 'reasoning', text: 'the full thought' },
       { kind: 'text', text: 'answer' },
     ])
@@ -365,5 +365,36 @@ describe('a failed model call ends the turn', () => {
     state = reduceEvent(state, event('turn/start', { turn: 2 }))
     expect(state.active).not.toBeNull()
     expect(state.failure).toBeNull()
+  })
+})
+
+describe('arrival order', () => {
+  it('splits reasoning around a tool call instead of merging it into one block', () => {
+    // Explicit sequences: this is about ordering, and the shared helpers reset
+    // their counter per fold, which hides the very thing under test.
+    let state = reduceEvent(emptyChat, { type: 'user/message', seq: 1, time: 0, data: { id: 'u', content: 'q' } })
+    state = applyLiveChunk(state, { type: 'reasoning-delta', index: 0, text: 'first thought' })
+    state = reduceEvent(state, {
+      type: 'tool/call',
+      seq: 2,
+      time: 0,
+      data: { callId: 'c1', name: 'pwsh', arguments: '{}' },
+    })
+    state = applyLiveChunk(state, { type: 'reasoning-delta', index: 0, text: 'second thought' })
+
+    const parts = state.messages[1]?.parts ?? []
+    expect(parts.map((part) => part.text)).toEqual(['first thought', 'second thought'])
+
+    const tool = state.messages[1]?.tools[0]
+    expect(tool?.seq).toBe(2)
+    expect(parts[0]?.seq).toBeLessThan(tool!.seq)
+    expect(parts[1]?.seq).toBeGreaterThanOrEqual(tool!.seq - 1)
+  })
+
+  it('keeps appending to the trailing thought while no tool intervenes', () => {
+    let state = emptyChat
+    state = applyLiveChunk(state, { type: 'reasoning-delta', index: 0, text: 'a' })
+    state = applyLiveChunk(state, { type: 'reasoning-delta', index: 0, text: 'b' })
+    expect(state.messages[0]?.parts).toHaveLength(1)
   })
 })

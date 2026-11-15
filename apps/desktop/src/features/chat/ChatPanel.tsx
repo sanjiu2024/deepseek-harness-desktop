@@ -34,6 +34,11 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
   const [unknownKinds, setUnknownKinds] = useState<string[]>([])
   // Blocking requests are a queue: the kernel can ask again while one is open.
   const [interactions, setInteractions] = useState<PendingInteraction[]>([])
+  // How many requests of each kind arrived in total. A pending approval is
+  // invisible otherwise: the card says "running" and nothing else is different
+  // from a slow call. If this stays at zero while a turn is stuck, the frame never
+  // reached the client; if it counts up, the dialog has a rendering problem.
+  const [requestCounts, setRequestCounts] = useState<Record<string, number>>({})
   const bottom = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -44,6 +49,10 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
       // A blocking request is not an event: ignoring it hangs the turn with no
       // error anywhere, so it is matched before anything else.
       if (frame.kind === 'request') {
+        setRequestCounts((previous) => ({
+          ...previous,
+          [frame.method]: (previous[frame.method] ?? 0) + 1,
+        }))
         const interaction = parseInteraction(frame.method, frame.id, frame.params)
         if (interaction !== null) {
           setInteractions((previous) => [...previous, interaction])
@@ -212,6 +221,15 @@ export function ChatPanel({ sessionId }: { sessionId: string }) {
             发送
           </button>
         </div>
+
+        {Object.keys(requestCounts).length > 0 && (
+          <p className="text-muted-foreground text-[11px]">
+            收到的请求帧：
+            {Object.entries(requestCounts)
+              .map(([method, count]) => `${method} ×${count}`)
+              .join(' · ')}
+          </p>
+        )}
 
         {unknownKinds.length > 0 && (
           // Which kernel events this view does not draw yet. Kept on screen while

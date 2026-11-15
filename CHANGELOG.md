@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-11-15
+
+Thinking is rendered where it happened, and a stuck approval can no longer hide.
+
+### Changed
+
+- **Blocks render in arrival order.** The view grouped every reasoning part into one block at the
+  top and every tool card after it, so a turn that thinks, calls a tool, then thinks again read as
+  one wall of thought followed by unrelated cards. Each part and each call now carries the
+  sequence it opened at, and the row sorts by it.
+- A reasoning part that resumes **after** a tool call starts a new block instead of continuing the
+  paragraph above it — the interruption is the point.
+
+### Added
+
+- A count of received blocking requests in the footer (`收到的请求帧：approval/request ×2`).
+  Without it a missing dialog is indistinguishable from a slow tool: if the count stays at zero
+  the frame never reached the client, and if it counts up the dialog has a rendering problem.
+  Those two need opposite fixes, and a screenshot could not tell them apart before.
+
+### Removed
+
+- An integration test that asserted an approval request arrives for an escalating prompt. It
+  passed or failed depending on what the model chose to do — it measured the model, not this
+  crate. The wire shape it was really guarding is covered by the serialisation tests in
+  `protocol.rs`.
+
+### Verified
+
+- `pnpm --filter @dsh-desktop/app test` → 47 passed (2 new: reasoning splits around a call, and
+  consecutive reasoning still merges while nothing interrupts it).
+
 ## [0.7.2] — 2026-11-15
 
 A failed model call no longer leaves the view claiming it is still generating.
