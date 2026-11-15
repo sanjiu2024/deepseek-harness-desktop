@@ -80,7 +80,7 @@ if (command === 'build') {
   process.exit(0)
 }
 
-step('cargo', ['build', '-p', 'dsh-desktop-app'])
+await buildWithRetry()
 if (noRun) {
   console.log(`[dev] built ${exe}`)
   process.exit(0)
@@ -196,6 +196,56 @@ function reachable(port, host) {
   })
 }
 
+/**
+ * Build, waiting out a lock on the output binary.
+ *
+ * On this machine a security/proxy agent takes a handle on the freshly written
+ * executable, which makes cargo fail with `os error 32` — reported as a build
+ * failure although the build itself is fine. The handle is usually released within
+ * a minute, so wait for it instead of failing; the last resort names the holder,
+ * because only a human can decide whether killing it is acceptable.
+ */
+async function buildWithRetry() {
+  const { holders } = await import('./lib/holders.mjs')
+  const attempts = 2
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const code = await stepAsync('cargo', ['build', '-p', 'dsh-desktop-app'])
+    if (code === 0) return
+
+    if (attempt === attempts) {
+      const held = holders(exe)
+      if (held.length > 0) {
+        for (const holder of held) {
+          console.error(
+            `[dev] ${exe} is held by "${holder.name}" (pid ${holder.pid}).\n` +
+              `      Free it: node scripts/handles.mjs "${exe}" --kill --only ${holder.name}`,
+          )
+        }
+      }
+      console.error('[dev] cargo build failed')
+      process.exit(code)
+    }
+
+    console.warn('[dev] the output binary is in use — waiting for the lock to clear')
+    await waitForRelease(exe, 60_000)
+  }
+}
+
+/** Poll until nothing holds the file, or the budget runs out. */
+async function waitForRelease(path, budgetMs) {
+  const { holders } = await import('./lib/holders.mjs')
+  const started = Date.now()
+  while (Date.now() - started < budgetMs) {
+    if (!existsSync(path) || holders(path).length === 0) {
+      console.log('[dev] the lock cleared, retrying the build')
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+  }
+  console.warn('[dev] the lock is still held after the wait; retrying anyway')
+}
+
 function step(cmd, args) {
   const result = spawnSync(cmd, args, {
     cwd: root,
@@ -207,6 +257,20 @@ function step(cmd, args) {
     console.error(`[dev] ${cmd} ${args.join(' ')} failed (${result.status})`)
     process.exit(result.status ?? 1)
   }
+}
+
+/** Async variant of [step] that returns the exit code instead of exiting. */
+function stepAsync(cmd, args) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, {
+      cwd: root,
+      env,
+      stdio: 'inherit',
+      shell: process.platform === 'win32',
+    })
+    child.on('exit', (code) => resolve(code ?? 1))
+    child.on('error', () => resolve(1))
+  })
 }
 
 /** Minimal `KEY=value` reader; unreadable is normal, not an error. */

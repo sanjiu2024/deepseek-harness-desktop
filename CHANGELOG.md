@@ -4,6 +4,37 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] — 2026-11-15
+
+The release build actually ships a front end now, and the whole chain is verified without a click.
+
+### Fixed
+
+- **A release build opened a blank window.** `tauri/custom-protocol` was never enabled — the
+  manifest had no `[features]` section — so nothing was embedded and no command ever reached
+  Rust. Tauri's own template ships this; a hand-written manifest has to add it. Found by
+  running the release binary with the log redirected to a file: both streams were empty, which
+  meant the front end had never loaded.
+- `cargo build` failing with `os error 32` (the output binary is held by another process —
+  `clash-verge-service` on this machine) is no longer reported as a build failure: the launcher
+  waits for the lock to clear, retries once, and then names the holder with the exact command
+  that frees it.
+
+### Added
+
+- `DSH_DESKTOP_AUTOSTART=1` starts the kernel without a click, and `kernel_paths` reports the
+  flag to the launch screen. It exists for unattended launches, and it is what made the
+  end-to-end check below possible without a human.
+
+### Verified end to end, by machine
+
+- `cargo build --release` → 9.0 MB binary; launched with the log redirected:
+  `INFO dsh_desktop_app: kernel_paths invoked fetched=true auto=true` — the bundled front end
+  loaded, called Rust, and the kernel process appeared (`node .../dsh/lib/bin.js --profile sdk`).
+- `pnpm --filter @dsh-desktop/app test` → 53 passed, including the four UI tests that click the
+  approval buttons and assert the exact `kernel_answer` payload.
+- `cargo test -p dsh-runtime` → 16 unit + 2 kernel + 2 round-trip. `clippy -D warnings` clean.
+
 ## [0.10.0] — 2026-11-15
 
 The last untested hop has a test, and the surface got the work it was owed.

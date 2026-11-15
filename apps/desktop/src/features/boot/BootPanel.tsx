@@ -50,6 +50,15 @@ export function BootPanel({ onReady }: { onReady: () => void }) {
       .catch((cause: unknown) => setError(String(cause)))
   }, [])
 
+  // Auto-start once, after the paths are known: the button needs the kernel
+  // directory to exist, and starting before that reads as a failure.
+  const started = useRef(false)
+  useEffect(() => {
+    if (started.current || paths?.autoStart !== true || paths.fetched !== true) return
+    started.current = true
+    void start()
+  }, [paths])
+
   useEffect(() => {
     const unlisteners: Array<() => void> = []
     let cancelled = false

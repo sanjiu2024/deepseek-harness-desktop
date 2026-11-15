@@ -24,6 +24,8 @@ export interface KernelPaths {
   kernelDir: string
   entry: string
   fetched: boolean
+  /** DSH_DESKTOP_AUTOSTART=1 — start without waiting for a click. */
+  autoStart: boolean
 }
 
 /** A frame the kernel sent us. */

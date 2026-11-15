@@ -44,17 +44,23 @@ pub struct KernelPaths {
     pub entry: String,
     /// False when `pnpm kernel:fetch` has not run.
     pub fetched: bool,
+    /// `DSH_DESKTOP_AUTOSTART=1` — the launch screen starts the kernel itself.
+    /// Useful for a kiosk-style launch, and for exercising the full path without
+    /// a click.
+    pub auto_start: bool,
 }
 
 /// Where the kernel lives and whether it is present, for the setup screen.
 #[tauri::command]
 pub fn kernel_paths(state: State<'_, AppState>) -> KernelPaths {
     let entry = dsh_runtime::kernel_entry(&state.kernel_dir);
+    tracing::debug!(target: "dsh_desktop_app", fetched = entry.exists(), auto = std::env::var("DSH_DESKTOP_AUTOSTART").is_ok(), "kernel_paths invoked");
     KernelPaths {
         home: state.dsh_home.to_string_lossy().into_owned(),
         kernel_dir: state.kernel_dir.to_string_lossy().into_owned(),
         fetched: entry.exists(),
         entry: entry.to_string_lossy().into_owned(),
+        auto_start: std::env::var("DSH_DESKTOP_AUTOSTART").is_ok_and(|value| value == "1"),
     }
 }
 
