@@ -30,6 +30,34 @@ Node ≥ 24.9, Rust 1.100, pnpm 12. The version pins live in `.nvmrc`,
 - **`apps/desktop/src-tauri`** — assembly only: `#[tauri::command]` wrappers, app state,
   window/tray setup. If a command body exceeds ~10 lines, the logic belongs in a crate.
 
+## Versions
+
+Semantic versioning describes **changes a consumer has to know about**. Nothing consumes this
+build yet, so the version is bumped only when a build is actually handed out:
+
+- **Bump on**: a tagged release, an installer someone else runs, a rollback point.
+- **Do not bump on**: an ordinary commit. Those accumulate under `Unreleased` in
+  `CHANGELOG.md`, which is the honest place for work nobody has consumed.
+
+A day of development that goes 0.1 → 0.12 is not progress, it is a commit counter. When a
+release is cut, the accumulated `Unreleased` section becomes one version with one rationale.
+
+## Changing the kernel
+
+The kernel is fetched, not vendored (`kernel/` is git-ignored, 819 MB). It is still ours to
+change — three layers, cheapest first:
+
+1. **Plugin** — `bridge/` mounted through `profiles/sdk/cordis.patch.yml`. Adds behaviour
+   (event subscriptions, services) and survives upgrades. This is how the client already
+   modifies kernel behaviour.
+2. **Patch** — `kernel-patches/*.patch`, applied by `scripts/fetch-kernel.mjs` on every fetch,
+   in filename order. For a change that must land *inside* a kernel module. A patch that fails
+   to apply fails the fetch by design. Rules live in `kernel-patches/README.md`.
+3. **Upstream PR** — anything still patched after one kernel upgrade.
+
+Never copy kernel source into this repository, and never edit `kernel/` by hand: the next
+`kernel:fetch` replaces it and the change vanishes silently.
+
 ## Hard rules
 
 1. **Never vendor the kernel.** It is fetched by `scripts/fetch-kernel.mjs` into `kernel/`,
@@ -52,5 +80,9 @@ Node ≥ 24.9, Rust 1.100, pnpm 12. The version pins live in `.nvmrc`,
 
 ## Layout discipline
 
-The top level is fixed at: `apps/ crates/ profiles/ scripts/ docs/` plus root config files.
-A new top-level directory needs a reason in `docs/设计.md` first.
+The top level is fixed at: `apps/ crates/ profiles/ scripts/ docs/ kernel-patches/` plus root
+config files. A new top-level directory needs a reason in `docs/设计.md` first.
+
+`kernel-patches/` is a directory rather than a `scripts/` subfolder because its contents are
+*data* that outlives the script that applies them: a patch is read, rebased and reviewed on its
+own, and burying it next to the tool that consumes it hides that it exists.

@@ -32,6 +32,7 @@ const MODEL = 'deepseek-v4.1-flash'
  */
 export function BootPanel({ onReady }: { onReady: () => void }) {
   const [paths, setPaths] = useState<KernelPaths | null>(null)
+  const [route, setRoute] = useState<{ provider: string; model: string } | null>(null)
   const [phase, setPhase] = useState<Phase>('idle')
   const [error, setError] = useState<string | null>(null)
   const [log, setLog] = useState<LogLine[]>([])
@@ -48,6 +49,10 @@ export function BootPanel({ onReady }: { onReady: () => void }) {
       .kernelPaths()
       .then(setPaths)
       .catch((cause: unknown) => setError(String(cause)))
+    void ipc
+      .settingsGet()
+      .then((snapshot) => setRoute({ provider: snapshot.provider, model: snapshot.model }))
+      .catch(() => setRoute({ provider: PROVIDER, model: MODEL }))
   }, [])
 
   // Auto-start once, after the paths are known: the button needs the kernel
@@ -94,8 +99,8 @@ export function BootPanel({ onReady }: { onReady: () => void }) {
       setPhase('handshaking')
       const result = await ipc.kernelInitialize({
         cwd: paths?.kernelDir ?? '.',
-        provider: PROVIDER,
-        model: MODEL,
+        provider: route?.provider ?? PROVIDER,
+        model: route?.model ?? MODEL,
       })
       append('initialize', JSON.stringify(result))
       setPhase('ready')
@@ -149,7 +154,7 @@ export function BootPanel({ onReady }: { onReady: () => void }) {
           </dd>
           <dt className="text-muted-foreground">路由</dt>
           <dd className="truncate font-mono opacity-80">
-            {PROVIDER} / {MODEL}
+            {(route?.provider ?? PROVIDER)} / {(route?.model ?? MODEL)}
           </dd>
           <dt className="text-muted-foreground">状态</dt>
           <dd className="flex items-center gap-1.5 font-mono">

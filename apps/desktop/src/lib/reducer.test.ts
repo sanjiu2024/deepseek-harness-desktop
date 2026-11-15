@@ -428,3 +428,26 @@ describe('hydrate', () => {
     expect(state.title).toBe('旧会话')
   })
 })
+
+describe('token usage', () => {
+  it('accumulates across steps instead of replacing', () => {
+    // The meter answers "what has this session cost"; a per-step number answers
+    // nothing anyone asked.
+    let state = emptyChat
+    state = applyLiveChunk(state, { type: 'usage', usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 50 } })
+    state = applyLiveChunk(state, { type: 'usage', usage: { inputTokens: 200, outputTokens: 20, cacheReadTokens: 80 } })
+
+    expect(state.usage).toMatchObject({
+      input: 200,
+      output: 20,
+      cached: 80,
+      totalInput: 300,
+      totalOutput: 30,
+    })
+  })
+
+  it('survives a usage chunk with missing fields', () => {
+    const state = applyLiveChunk(emptyChat, { type: 'usage', usage: {} })
+    expect(state.usage).toMatchObject({ input: 0, output: 0, cached: 0 })
+  })
+})

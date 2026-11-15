@@ -83,12 +83,22 @@ export interface SessionHistory {
   events: StoredEvent[]
 }
 
+/** Route settings, plus whether a key exists (never the key itself). */
+export interface SettingsSnapshot {
+  provider: string
+  model: string
+  hasCredential: boolean
+}
+
 export const ipc = {
   appInfo: (): Promise<AppInfo> => invoke<AppInfo>('app_info'),
   kernelPaths: (): Promise<KernelPaths> => invoke<KernelPaths>('kernel_paths'),
   kernelStart: (): Promise<void> => invoke<void>('kernel_start'),
   kernelStop: (): Promise<void> => invoke<void>('kernel_stop'),
   kernelDiagnostics: (): Promise<string[]> => invoke<string[]>('kernel_diagnostics'),
+  settingsGet: (): Promise<SettingsSnapshot> => invoke<SettingsSnapshot>('settings_get'),
+  settingsSet: (provider: string, model: string): Promise<SettingsSnapshot> =>
+    invoke<SettingsSnapshot>('settings_set', { provider, model }),
   sessionList: (): Promise<SessionSummary[]> => invoke<SessionSummary[]>('session_list'),
   sessionLoad: (id: string): Promise<SessionHistory> => invoke<SessionHistory>('session_load', { id }),
   kernelInitialize: (options: InitializeOptions): Promise<unknown> =>

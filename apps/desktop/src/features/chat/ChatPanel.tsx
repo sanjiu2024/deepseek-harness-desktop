@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ipc, onKernelFrame, promptSession, type FrameId, type KernelFrame } from '@/lib/ipc.ts'
+import {
+  ipc,
+  onKernelFrame,
+  promptSession,
+  type FrameId,
+  type KernelFrame,
+  type SettingsSnapshot,
+} from '@/lib/ipc.ts'
 
 const ipcAnswer = (id: FrameId, result: unknown) => ipc.kernelAnswer(id, result)
 import {
@@ -18,6 +25,7 @@ import {
   type PendingInteraction,
 } from '@/lib/interaction.ts'
 import { InteractionHost } from './InteractionHost.tsx'
+import { SettingsDialog } from '@/features/settings/SettingsDialog.tsx'
 import { MessageRow } from './MessageRow.tsx'
 
 /**
@@ -39,6 +47,12 @@ export function ChatPanel({
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [settings, setSettings] = useState<SettingsSnapshot | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+
+  useEffect(() => {
+    void ipc.settingsGet().then(setSettings).catch(() => {})
+  }, [])
   const [unknownKinds, setUnknownKinds] = useState<string[]>([])
   // Blocking requests are a queue: the kernel can ask again while one is open.
   const [interactions, setInteractions] = useState<PendingInteraction[]>([])
@@ -188,9 +202,33 @@ export function ChatPanel({
             {chat.route !== null ? `${chat.route.provider} / ${chat.route.model}` : '未握手'}
           </span>
         </div>
-        <span className="text-muted-foreground shrink-0 font-mono text-[11px]">
-          seq {chat.lastSeq}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          {chat.usage !== null && (
+            <span
+              className="text-muted-foreground font-mono text-[10px] tabular-nums"
+              title={`本会话累计：输入 ${chat.usage.totalInput} / 输出 ${chat.usage.totalOutput}`}
+            >
+              ↑{compact(chat.usage.totalInput)} ↓{compact(chat.usage.totalOutput)}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            title="模型路由"
+            aria-label="模型路由"
+            className="text-muted-foreground hover:bg-secondary/60 hover:text-foreground flex size-6 items-center justify-center rounded-md transition-colors active:scale-95"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true" className="size-3.5">
+              <circle cx="8" cy="8" r="2.4" fill="none" stroke="currentColor" strokeWidth="1.4" />
+              <path
+                d="M8 1.6v1.6M8 12.8v1.6M1.6 8h1.6M12.8 8h1.6M3.5 3.5l1.1 1.1M11.4 11.4l1.1 1.1M12.5 3.5l-1.1 1.1M4.6 11.4l-1.1 1.1"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        </div>
       </header>
 
       <section className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
@@ -220,6 +258,17 @@ export function ChatPanel({
         <pre className="border-destructive/40 bg-destructive/10 text-destructive mx-6 mb-2 max-h-32 overflow-auto rounded-lg border p-2.5 text-xs whitespace-pre-wrap">
           {error}
         </pre>
+      )}
+
+      {settingsOpen && settings !== null && (
+        <SettingsDialog
+          settings={settings}
+          onChange={async (provider, model) => {
+            const next = await ipc.settingsSet(provider, model)
+            setSettings(next)
+          }}
+          onClose={() => setSettingsOpen(false)}
+        />
       )}
 
       {interactions[0] !== undefined && (
@@ -349,4 +398,11 @@ function toSessionEvent(frame: KernelFrame, sessionId: string): SessionEvent | n
     time: typeof event.time === 'number' ? event.time : Date.now(),
     data: event.data,
   }
+}
+
+/** 12345 → 12.3k, so the meter never pushes the gear off the header. */
+function compact(value: number): string {
+  if (value < 1000) return String(value)
+  if (value < 1_000_000) return `${(value / 1000).toFixed(1)}k`
+  return `${(value / 1_000_000).toFixed(1)}M`
 }

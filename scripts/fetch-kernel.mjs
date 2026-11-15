@@ -10,6 +10,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { applyPatches } from './lib/kernel-patches.mjs'
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const pinPath = join(root, 'profiles', 'sdk', 'kernel.json')
 const stagingDir = join(root, '.kernel-staging')
@@ -58,6 +60,14 @@ if (installed.version !== pin.version) {
 
 rmSync(kernelDir, { recursive: true, force: true })
 renameSync(stagingDir, kernelDir)
+
+// Patches are part of the installation, not a post-step someone remembers to run.
+try {
+  applyPatches({ kernelDir, patchDir: join(root, 'kernel-patches') })
+} catch (error) {
+  rmSync(kernelDir, { recursive: true, force: true })
+  fail(String(error.message))
+}
 
 const bin = typeof installed.bin === 'object' && installed.bin !== null
   ? installed.bin.dsh

@@ -42,6 +42,63 @@ pub fn dsh_home(data_dir: &std::path::Path) -> PathBuf {
         .unwrap_or_else(|| data_dir.join("dsh-home"))
 }
 
+/// What the user can change without editing a file.
+///
+/// Deliberately tiny. The kernel's own configuration surface is enormous and
+/// belongs to the kernel; this is only what the *client* must know before it can
+/// start one: which route to ask for, and where the credential comes from.
+///
+/// Keys are never stored here — they stay in the process environment (see
+/// `DSH_DESKTOP_ENV`), because a JSON file next to a session log is a worse place
+/// for a secret than a file with no read path through the UI.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Settings {
+    pub provider: String,
+    pub model: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            provider: "opencode-go".to_owned(),
+            model: "deepseek-v4.1-flash".to_owned(),
+        }
+    }
+}
+
+impl Settings {
+    /// Read `settings.json` from the kernel home, falling back to the defaults.
+    ///
+    /// A missing or malformed file is not an error: a first launch has none, and a
+    /// hand-edited one that broke JSON should not make the app unstartable.
+    pub fn load(home: &std::path::Path) -> Self {
+        let path = home.join("settings.json");
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            return Self::default();
+        };
+        // Notepad and PowerShell both write a UTF-8 BOM. serde_json treats it as a
+        // syntax error, which would silently fall back to the defaults — a user who
+        // edited this file would see nothing change and no reason why.
+        let raw = raw.trim_start_matches('﻿');
+        match serde_json::from_str(raw) {
+            Ok(settings) => settings,
+            Err(error) => {
+                tracing::warn!(target: "dsh_desktop_app", %error, path = %path.display(), "ignoring unreadable settings");
+                Self::default()
+            }
+        }
+    }
+
+    /// Write `settings.json` back to the kernel home.
+    pub fn save(&self, home: &std::path::Path) -> Result<(), String> {
+        std::fs::create_dir_all(home).map_err(|error| error.to_string())?;
+        let path = home.join("settings.json");
+        let body = serde_json::to_string_pretty(self).map_err(|error| error.to_string())?;
+        std::fs::write(&path, body).map_err(|error| format!("{}: {error}", path.display()))
+    }
+}
+
 pub struct AppState {
     /// Private kernel home. Never `~/.dsh` — that belongs to the user's CLI.
     pub dsh_home: PathBuf,
@@ -195,5 +252,64 @@ mod tests {
     #[test]
     fn missing_env_file_is_not_an_error() {
         assert!(read_env_file(std::path::Path::new("does-not-exist.env")).is_empty());
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("dsh-settings-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("scratch");
+        path
+    }
+
+    #[test]
+    fn a_missing_settings_file_is_the_default_route() {
+        let home = scratch("missing");
+        let settings = Settings::load(&home);
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(settings.provider, "opencode-go");
+        assert!(settings.model.contains("flash"));
+    }
+
+    #[test]
+    fn settings_round_trip() {
+        let home = scratch("roundtrip");
+        Settings {
+            provider: "deepseek-official".to_owned(),
+            model: "deepseek-v4.1-pro".to_owned(),
+        }
+        .save(&home)
+        .expect("save");
+
+        let loaded = Settings::load(&home);
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(loaded.provider, "deepseek-official");
+        assert_eq!(loaded.model, "deepseek-v4.1-pro");
+    }
+
+    #[test]
+    fn a_utf8_bom_is_not_a_syntax_error() {
+        // PowerShell's `Set-Content -Encoding utf8` and Notepad both emit a BOM.
+        // Without stripping it serde_json reports a syntax error and the app
+        // silently runs on the defaults — the user sees their edit do nothing.
+        let home = scratch("bom");
+        let mut body = String::new();
+        body.push(char::from_u32(0xFEFF).expect("BOM"));
+        body.push_str(r#"{"provider":"p","model":"m"}"#);
+        std::fs::write(home.join("settings.json"), body).expect("write");
+
+        let settings = Settings::load(&home);
+        let _ = std::fs::remove_dir_all(&home);
+
+        assert_eq!(settings.provider, "p");
+        assert_eq!(settings.model, "m");
+    }
+
+    #[test]
+    fn a_broken_settings_file_falls_back_instead_of_refusing_to_start() {
+        let home = scratch("broken");
+        std::fs::write(home.join("settings.json"), "{ not json").expect("write");
+        let settings = Settings::load(&home);
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(settings.provider, "opencode-go");
     }
 }

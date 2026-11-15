@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format loosely foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Work that nobody has consumed yet. The version is bumped only when a build is handed out — see
+"Versions" in `AGENTS.md`.
+
+### Added — the app is configurable and observable
+
+- **Settings panel** (gear in the header): provider and model, persisted to
+  `<dsh_home>/settings.json` and used by the next kernel start. A malformed file falls back to
+  the defaults instead of making the app unstartable; the panel says whether a credential exists
+  without ever showing it.
+- **Token meter** in the header: input/output for the session, accumulated rather than per-step,
+  because "what has this cost" is the question a meter answers. `inputTokens` / `outputTokens` /
+  `cacheReadTokens` come from the `usage` stream chunk we previously threw away.
+- **`kernel-patches/`** — the layer that answers "the kernel isn't in the repo, so how do we
+  change it?". `fetch-kernel.mjs` now applies `kernel-patches/*.patch` to the fetched kernel
+  in filename order, and **fails the fetch if a patch does not apply**: a half-patched kernel is
+  worse than an unfetched one. No patches exist yet — everything so far is a plugin, which is
+  the layer that survives upgrades.
+- `Settings` round-trip tests: default when missing, round-trip when present, defaults when
+  corrupt.
+
+### Changed — the version policy
+
+The version had gone 0.1 → 0.12 in a day, which is a commit counter, not a version. Bumping now
+happens only when a build is actually handed out; ordinary work accumulates here. Recorded in
+`AGENTS.md#Versions` and `docs/设计.md`, along with the three layers for changing the kernel.
+
+### Tests
+
+- Front end: 62 passed (2 new usage tests). Rust: 5 in `dsh-store`, 5 in the app, 20 in
+  `dsh-runtime`.
+
 ## [0.12.0] — 2026-11-15
 
 Conversations survive a restart now: the client reads the kernel's own session store.

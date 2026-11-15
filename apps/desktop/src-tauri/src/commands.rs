@@ -10,7 +10,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::state::AppState;
+use crate::state::{AppState, Settings};
 
 /// Event name the front end listens on for every kernel frame.
 pub const KERNEL_EVENT: &str = "kernel://message";
@@ -293,6 +293,60 @@ fn trace_frame(app: &AppHandle, value: &serde_json::Value) {
     }
 }
 
+/// The route the client should ask for, plus whether a credential is present.
+///
+/// The credential itself never crosses this boundary: the UI only needs to know
+/// whether starting a kernel will work, not what the key is.
+#[tauri::command]
+pub fn settings_get(state: State<'_, AppState>) -> SettingsSnapshot {
+    let settings = Settings::load(&state.dsh_home);
+    tracing::debug!(target: "dsh_desktop_app", provider = %settings.provider, model = %settings.model, has_key = credential_present(), "settings_get");
+    SettingsSnapshot {
+        provider: settings.provider,
+        model: settings.model,
+        has_credential: credential_present(),
+    }
+}
+
+/// Persist a new route. Takes effect on the next kernel start.
+#[tauri::command]
+pub fn settings_set(
+    state: State<'_, AppState>,
+    provider: String,
+    model: String,
+) -> Result<SettingsSnapshot, String> {
+    let provider = provider.trim().to_owned();
+    let model = model.trim().to_owned();
+    if provider.is_empty() || model.is_empty() {
+        return Err("provider and model must not be empty".to_owned());
+    }
+    Settings { provider, model }.save(&state.dsh_home)?;
+    Ok(SettingsSnapshot {
+        provider: Settings::load(&state.dsh_home).provider,
+        model: Settings::load(&state.dsh_home).model,
+        has_credential: credential_present(),
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsSnapshot {
+    pub provider: String,
+    pub model: String,
+    /// True when some provider key is in the environment.
+    pub has_credential: bool,
+}
+
+/// Does any provider key exist in this process?
+///
+/// Whether the key came from the environment or from  is a detail the
+/// user cannot act on; "no key at all" is the thing that stops a turn.
+fn credential_present() -> bool {
+    ["DEEPSEEK_API_KEY", "OPENCODE_API_KEY"]
+        .iter()
+        .any(|key| std::env::var_os(key).is_some())
+}
+
 /// Every session on disk, newest first.
 ///
 /// The kernel keeps no index and exposes no "list" call, so this reads the store
@@ -331,6 +385,8 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         kernel_diagnostics,
         session_list,
         session_load,
+        settings_get,
+        settings_set,
         kernel_stop,
     ]
 }

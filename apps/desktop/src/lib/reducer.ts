@@ -51,6 +51,16 @@ export interface Message {
   seq: number
 }
 
+/** What the last completed step cost, as the provider reported it. */
+export interface TokenUsage {
+  input: number
+  output: number
+  cached: number
+  /** Running sum for this session, so a long conversation shows its weight. */
+  totalInput: number
+  totalOutput: number
+}
+
 export interface ChatState {
   messages: Message[]
   /** Highest sequence folded in; makes the reducer idempotent across replays. */
@@ -63,6 +73,8 @@ export interface ChatState {
   route: { provider: string; model: string } | null
   /** Last failure, from `turn/end` or a failed attempt. */
   failure: string | null
+  /** Token usage of the most recent step, and the session total. */
+  usage: TokenUsage | null
 }
 
 export const emptyChat: ChatState = {
@@ -72,6 +84,7 @@ export const emptyChat: ChatState = {
   active: null,
   route: null,
   failure: null,
+  usage: null,
 }
 
 /**
@@ -229,8 +242,27 @@ export function applyLiveChunk(state: ChatState, chunk: unknown, time = Date.now
         )
       })
     }
+    case 'usage': {
+      const usage = read(chunk, 'usage')
+      const input = asNumber(read(usage, 'inputTokens')) ?? 0
+      const output = asNumber(read(usage, 'outputTokens')) ?? 0
+      const cached = asNumber(read(usage, 'cacheReadTokens')) ?? 0
+      const previous = state.usage
+      return {
+        ...state,
+        usage: {
+          input,
+          output,
+          cached,
+          // Sum, not replace: the meter answers "what has this session cost",
+          // and a per-step number answers nothing the user asked.
+          totalInput: (previous?.totalInput ?? 0) + input,
+          totalOutput: (previous?.totalOutput ?? 0) + output,
+        },
+      }
+    }
     default:
-      // `block-start`, `block-end`, `usage`, `finish` carry no renderable text.
+      // `block-start`, `block-end`, `finish` carry no renderable text.
       return state
   }
 }
