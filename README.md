@@ -62,6 +62,7 @@ pnpm kernel:fetch          # pins @deepseek-ai/dsh into kernel/, verifies the ve
 pnpm kernel:slim --apply   # 753 MB → 370 MB, each removal verified by a real turn
 pnpm kernel:smoke          # prove the wire works before touching anything else
 pnpm dev                   # the app (vite + tauri); see scripts/dev.mjs
+pnpm verify                # everything: fmt, clippy, tests, kernel round trips, front end, smoke
 ```
 
 A model needs a key: either `OPENCODE_API_KEY` / `DEEPSEEK_API_KEY` in the environment, or
@@ -112,6 +113,9 @@ cargo test --workspace --release     # 126: runtime 35+2+2+5+1+1+1 · store 48+1
 pnpm --filter @dsh-desktop/app test  # 84
 pnpm smoke:app                       # the real binary, headless: front end loaded? kernel? store?
 ```
+
+`pnpm verify` runs all of the above in one go, including the three checks that ask a live kernel.
+It prints skips explicitly — a check that did not run is never reported as a pass.
 
 `smoke:app` is the one that catches what unit tests cannot: a release build with no front end
 inside, or a kernel that never completes its handshake. It asserts on the **log file**, because a

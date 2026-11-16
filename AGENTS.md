@@ -16,6 +16,8 @@ command fails, fix this file in the same change.
 | Rust test | `cargo test --workspace` | |
 | Rust lint | `cargo clippy --workspace -- -D warnings` | |
 | TS typecheck | `pnpm --filter @dsh-desktop/app check` | |
+| **Verify everything** | `pnpm verify` | format · clippy · tests · kernel round trips · front end · build · smoke |
+| Verify, fast | `pnpm verify:fast` | skips the build and the smoke (the two slow ones) |
 
 Node ≥ 24.9, Rust 1.100, pnpm 12. The version pins live in `.nvmrc`,
 `rust-toolchain.toml`, and `package.json#packageManager`.
@@ -93,6 +95,22 @@ Cleanup after a build experiment: `pnpm clean` (report) → `pnpm clean:apply` (
    merge the two streams.
 5. **Generated bindings are read-only.** `src/lib/ipc.ts` comes from `tauri-specta`; edit the
    Rust command, not the generated file.
+
+## 提交前跑 pnpm verify
+
+一条命令跑完全部检查，退出码 0 才算数：
+
+```
+rust/rustfmt · rust/clippy · rust/cargo test · kernel round trips
+front/typecheck · front tests · front build · headless smoke
+```
+
+**跳过的项会明确打印成 skip，并说明为什么**（「需要 kernel/」「fast 模式」）。一个因为没跑而
+悄悄通过的检查，比没有检查更糟——所以 `0 passed · 0 failed · 3 skipped` 这种结果要自己看一眼
+skip 的原因。
+
+失败时会打出**能直接复现的命令**和输出的最后十几行。要单跑一组：`--only=rust`、
+`--only=kernel`、`--only=front`、`--only=smoke`。
 
 ## 对内核的行为要问内核
 

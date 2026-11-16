@@ -58,6 +58,32 @@ front end                          → 84 (file-tree fixtures follow the new lis
 cargo clippy --workspace --all-targets --release -D warnings → clean
 ```
 
+### Added — `pnpm verify`, one command for everything that must be true
+
+Eight checks in one run: rustfmt, clippy, the Rust suites, the three live-kernel round trips,
+TypeScript, front-end tests, the production build, and the headless smoke.
+
+The design decisions worth keeping:
+
+- **Skips are printed with a reason.** `0 passed · 0 failed · 3 skipped` is not a green run; it is a
+  run that did not test three things, and it says which. A check that passes because it never ran
+  is worse than no check.
+- **Failures print the command that reproduces them** plus the last fifteen lines of output.
+- **`chcp 65001` before every child on Windows.** Otherwise a Chinese error message from `cargo`
+  arrives as mojibake — an unreadable reason is no reason at all.
+
+The failure path was tested on purpose (pointing `CARGO` at a missing binary), not assumed: three
+failures, each with its command, exit code 1. The success path exits 0.
+
+### Verified
+
+```
+node scripts/verify.mjs
+  8 passed · 0 failed · 0 skipped   (exit 0, ~2 min)
+CARGO=D:/nope/cargo node scripts/verify.mjs --only=rust
+  0 passed · 3 failed · 0 skipped   (exit 1, each failure names its command)
+```
+
 ### Added — the workspace can tell when it changed
 
 `dsh-native::watch` takes a snapshot of one directory level and diffs it: added, removed, modified.
