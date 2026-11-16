@@ -58,6 +58,36 @@ front end                          → 84 (file-tree fixtures follow the new lis
 cargo clippy --workspace --all-targets --release -D warnings → clean
 ```
 
+### Added — a crash now leaves evidence, and big files preview instead of refusing
+
+**Kernel exit carries its last words.** `ExitStatus` gained `tail`: the last 40 stderr lines, which
+the ring buffer already held for diagnostics. They travel on `kernel://exit` and are written to
+`desktop.log` as `error` under the target `dsh_kernel_exit`. A crash with exit code 1 and a stack
+trace nobody kept is a crash that repeats for the same unknown reason.
+
+**Previews read a prefix instead of refusing.** `fs_read` used to answer `TooLarge` above its
+budget, which made the first page of a 5 MB log unreachable — and the first page is what anyone
+wants. It now reads the first `maxBytes`, cuts at a character boundary, and returns
+`truncated: true`.
+
+The boundary detail is the whole difficulty: cutting at an arbitrary byte offset lands inside a
+multi-byte character, strict decoding then fails, and the preview becomes a wall of replacement
+glyphs — the exact failure this module was written to avoid. `decode_prefix` therefore accepts only
+a **non-lossy** decode and backs off a byte at a time (at most four attempts). The first version
+accepted a lossy result and never backed off; the tests caught it immediately.
+
+One old test asserted "a huge file must be refused" — it encoded the previous decision, not a law,
+so it was rewritten alongside the behaviour it was pinning.
+
+### Verified
+
+```
+cargo test -p dsh-native --release → 21 + 4 pty (3 exit-tail, 3 prefix, 1 rewritten)
+cargo test --workspace --release → 126
+cargo clippy --workspace --all-targets --release -D warnings → exit 0
+front end → 84
+```
+
 ### Added — a crashed kernel comes back on the next message
 
 A dead kernel used to mean "restart the application": the pool forgot it, and every call answered

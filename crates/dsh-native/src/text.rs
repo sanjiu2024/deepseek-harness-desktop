@@ -18,6 +18,37 @@ pub struct Decoded {
     pub encoding: &'static str,
     /// True when bytes had to be replaced. The preview is readable, but not faithful.
     pub lossy: bool,
+    /// True when this is the beginning of a larger file.
+    ///
+    /// Refusing to open a 5 MB log is not helpful — its first page is usually exactly what was
+    /// wanted. Reading a prefix and saying so is the honest version of the same limit.
+    pub truncated: bool,
+}
+
+/// Decode the beginning of a file that continues past `bytes`.
+///
+/// A prefix cut at an arbitrary byte offset usually ends in the middle of a character, which makes
+/// strict decoding fail and the preview come back as a wall of replacement characters. Dropping up
+/// to three trailing bytes fixes that without a decoder that can stop mid-stream: at most four
+/// attempts, and only for the file's tail.
+pub fn decode_prefix(bytes: &[u8]) -> Option<Decoded> {
+    let mut candidate = bytes;
+    // UTF-8 is at most 4 bytes per character; GB18030 is at most 4 as well.
+    for _ in 0..4 {
+        // Only a clean decode will do. A lossy result here almost always means the cut landed
+        // inside a multi-byte character — accepting it would turn the last character of every
+        // truncated preview into a replacement glyph, which is exactly what this module exists to
+        // avoid.
+        if let Some(mut decoded) = decode(candidate).filter(|decoded| !decoded.lossy) {
+            decoded.truncated = true;
+            return Some(decoded);
+        }
+        if candidate.is_empty() {
+            return None;
+        }
+        candidate = &candidate[..candidate.len() - 1];
+    }
+    None
 }
 
 /// Decode bytes that are believed to be text.
@@ -31,6 +62,7 @@ pub fn decode(bytes: &[u8]) -> Option<Decoded> {
             text: String::from_utf8_lossy(rest).into_owned(),
             encoding: "utf-8",
             lossy: std::str::from_utf8(rest).is_err(),
+            truncated: false,
         });
     }
     if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
@@ -49,6 +81,7 @@ pub fn decode(bytes: &[u8]) -> Option<Decoded> {
                 text: text.to_owned(),
                 encoding: "utf-8",
                 lossy: false,
+                truncated: false,
             });
         }
         return None;
@@ -61,6 +94,7 @@ pub fn decode(bytes: &[u8]) -> Option<Decoded> {
             text: text.into_owned(),
             encoding: "gb18030",
             lossy: false,
+            truncated: false,
         });
     }
 
@@ -73,6 +107,7 @@ pub fn decode(bytes: &[u8]) -> Option<Decoded> {
         text: text.into_owned(),
         encoding: "utf-8",
         lossy: true,
+        truncated: false,
     })
 }
 
@@ -101,6 +136,7 @@ fn utf16(rest: &[u8], little_endian: bool) -> Option<Decoded> {
             "utf-16be"
         },
         lossy: false,
+        truncated: false,
     })
 }
 

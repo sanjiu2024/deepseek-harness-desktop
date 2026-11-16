@@ -351,6 +351,21 @@ fn forward_exit(app: &AppHandle, client: &KernelClient) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         if let Ok(status) = exited.recv().await {
+            // A crash with no reason recorded is a crash that repeats for the same unknown cause.
+            // The kernel's last stderr lines are the only evidence there is, so they go to the log
+            // as well as to the window.
+            if status.requested {
+                tracing::info!(target: "dsh_desktop_app", code = ?status.code, "kernel stopped on request");
+            } else {
+                tracing::error!(
+                    target: "dsh_desktop_app",
+                    code = ?status.code,
+                    "kernel died; last stderr lines follow"
+                );
+                for line in &status.tail {
+                    tracing::error!(target: "dsh_kernel_exit", "{line}");
+                }
+            }
             let _ = app.emit(KERNEL_EXIT_EVENT, status);
         }
     });

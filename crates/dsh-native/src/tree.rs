@@ -186,8 +186,16 @@ pub fn read_preview(
         return Err(TreeError::OutsideWorkspace(target.display().to_string()));
     }
     let metadata = std::fs::metadata(&target)?;
-    if metadata.len() > max_bytes {
-        return Err(TreeError::TooLarge(metadata.len()));
+    let size = metadata.len();
+    if size > max_bytes {
+        // Read the beginning and say it is a beginning. A 5 MB log whose first page is refused
+        // is a preview that pretends the file does not exist.
+        let file = std::fs::File::open(&target)?;
+        let mut buffer = Vec::with_capacity(max_bytes as usize);
+        use std::io::Read as _;
+        file.take(max_bytes).read_to_end(&mut buffer)?;
+        return crate::text::decode_prefix(&buffer)
+            .ok_or_else(|| TreeError::NotATextFile(target.display().to_string()));
     }
     let bytes = std::fs::read(&target)?;
     // Decoding is in `text`: GBK is text, UTF-16 is text, and calling either "binary" (or
@@ -274,13 +282,23 @@ mod tests {
     }
 
     #[test]
-    fn a_huge_file_is_refused_rather_than_truncated() {
-        // Truncation would look like a file that ends mid-sentence.
+    fn a_huge_file_is_previewed_as_a_prefix_that_says_so() {
+        // This used to refuse the file outright. Refusing a 5 MB log means its first page — the
+        // part anyone actually wants — is unreachable, so the contract is now "the beginning,
+        // marked as a beginning". The flag is what keeps it from looking like a file that ends
+        // mid-sentence.
         let root = scratch("huge");
         std::fs::write(root.join("big.txt"), "x".repeat(4096)).expect("write");
-        let result = read_preview(&root, &root.join("big.txt"), 1024);
+        let preview = read_preview(&root, &root.join("big.txt"), 1024).expect("preview");
         let _ = std::fs::remove_dir_all(&root);
-        assert!(matches!(result, Err(TreeError::TooLarge(_))));
+
+        assert!(preview.truncated);
+        assert!(!preview.lossy);
+        assert_eq!(
+            preview.text.len(),
+            1024,
+            "exactly the budget, not a byte more"
+        );
     }
 }
 
@@ -377,5 +395,77 @@ mod order_tests {
             .map(|entry| entry.name.as_str())
             .collect();
         assert_eq!(files, vec!["big.txt", "small.txt"]);
+    }
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("dsh-prefix-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("scratch");
+        root
+    }
+
+    #[test]
+    fn a_large_file_is_previewed_as_a_prefix_instead_of_refused() {
+        // 5 KB of Chinese text, previewed with a 1 KB budget: the first page is what was wanted.
+        let root = scratch("big");
+        let body = "这是一行中文，用来验证前缀解码不会切坏字符。\n".repeat(200);
+        let path = root.join("big.txt");
+        std::fs::write(&path, &body).expect("write");
+
+        let preview = read_preview(&root, &path, 1024).expect("preview");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(
+            preview.truncated,
+            "the caller needs to know it is a beginning"
+        );
+        assert!(
+            !preview.lossy,
+            "cutting at a character boundary is not lossy"
+        );
+        assert!(!preview.text.is_empty());
+        assert!(
+            !preview.text.contains('\u{FFFD}'),
+            "a prefix must not end in a replacement character: {:?}",
+            &preview.text[preview.text.len().saturating_sub(20)..]
+        );
+    }
+
+    #[test]
+    fn a_small_file_is_not_marked_truncated() {
+        let root = scratch("small");
+        let path = root.join("small.txt");
+        std::fs::write(&path, "整份都在这里").expect("write");
+
+        let preview = read_preview(&root, &path, 1024).expect("preview");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(!preview.truncated);
+        assert_eq!(preview.text, "整份都在这里");
+    }
+
+    #[test]
+    fn a_prefix_of_gbk_is_decoded_as_gbk() {
+        // The whole point of the encoding work: a Chinese Windows .txt decodes as GB18030, and a
+        // prefix of one must not come back as replacement characters.
+        let root = scratch("gbk");
+        let text = "中文测试，一行又一行，看看前缀能不能解出来。\n".repeat(100);
+        let (encoded, _, had_errors) = encoding_rs::GB18030.encode(&text);
+        assert!(!had_errors);
+        let path = root.join("gbk.txt");
+        std::fs::write(&path, &encoded).expect("write");
+
+        let preview = read_preview(&root, &path, 512).expect("preview");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(preview.truncated);
+        assert_eq!(preview.encoding, "gb18030");
+        assert!(preview.text.contains("中文测试"), "{:?}", preview.text);
+        assert!(!preview.lossy);
     }
 }

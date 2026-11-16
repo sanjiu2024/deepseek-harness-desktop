@@ -36,6 +36,23 @@ const EVENT_BUFFER: usize = 1024;
 /// stderr lines kept for the diagnostics panel.
 const STDERR_HISTORY: usize = 200;
 
+/// How many lines of stderr travel with an exit event.
+///
+/// Enough for a stack trace, few enough that an event payload stays small.
+const EXIT_TAIL_LINES: usize = 40;
+
+/// The last `count` lines of the ring buffer, oldest first.
+fn last_lines(
+    tail: &std::sync::Mutex<std::collections::VecDeque<String>>,
+    count: usize,
+) -> Vec<String> {
+    let Ok(buffer) = tail.lock() else {
+        return Vec::new();
+    };
+    let start = buffer.len().saturating_sub(count);
+    buffer.iter().skip(start).cloned().collect()
+}
+
 /// Default bound on the `initialize` handshake.
 pub const DEFAULT_INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -119,12 +136,19 @@ struct PendingCall {
 }
 
 /// How the kernel process ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExitStatus {
     pub code: Option<i32>,
     /// True when the client tore the process down rather than the kernel dying.
     pub requested: bool,
+    /// The last lines the kernel wrote to stderr.
+    ///
+    /// A crash with exit code 1 and a stack trace nobody kept is a crash that will happen again
+    /// for the same unknown reason. The ring buffer already existed for diagnostics; carrying it
+    /// on the exit event is what makes it *evidence* rather than a debug trace someone forgot to
+    /// enable.
+    pub tail: Vec<String>,
 }
 
 impl KernelClient {
@@ -204,6 +228,7 @@ impl KernelClient {
             let child = Arc::clone(&child_slot);
             let exited = exited.clone();
             let stop_requested = Arc::clone(&stop_requested);
+            let tail = Arc::clone(&stderr_tail);
             tokio::spawn(async move {
                 loop {
                     {
@@ -217,6 +242,7 @@ impl KernelClient {
                                     code: status.code(),
                                     requested: stop_requested
                                         .load(std::sync::atomic::Ordering::Relaxed),
+                                    tail: last_lines(&tail, EXIT_TAIL_LINES),
                                 });
                                 return;
                             }
@@ -226,6 +252,7 @@ impl KernelClient {
                                 let _ = exited.send(ExitStatus {
                                     code: None,
                                     requested: false,
+                                    tail: last_lines(&tail, EXIT_TAIL_LINES),
                                 });
                                 return;
                             }
@@ -449,6 +476,7 @@ impl KernelClient {
         let _ = self.exited.send(ExitStatus {
             code: None,
             requested: true,
+            tail: last_lines(&self.stderr_tail, EXIT_TAIL_LINES),
         });
         self.terminate();
     }
@@ -533,5 +561,41 @@ mod tests {
             kernel_entry(Path::new("/repo/kernel")),
             PathBuf::from("/repo/kernel/node_modules/@deepseek-ai/dsh/lib/bin.js")
         );
+    }
+}
+
+#[cfg(test)]
+mod exit_tail_tests {
+    use super::*;
+
+    fn tail(lines: &[&str]) -> std::sync::Mutex<std::collections::VecDeque<String>> {
+        let buffer: std::collections::VecDeque<String> =
+            lines.iter().map(|line| (*line).to_owned()).collect();
+        std::sync::Mutex::new(buffer)
+    }
+
+    #[test]
+    fn the_tail_keeps_the_end_not_the_beginning() {
+        // A crash reason is at the end: start-up chatter is not evidence.
+        let buffer = tail(&["boot", "loading", "panic: cannot find module 'x'"]);
+        assert_eq!(
+            last_lines(&buffer, 2),
+            vec![
+                "loading".to_owned(),
+                "panic: cannot find module 'x'".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_short_history_is_returned_whole() {
+        let buffer = tail(&["only line"]);
+        assert_eq!(last_lines(&buffer, 40), vec!["only line".to_owned()]);
+    }
+
+    #[test]
+    fn an_empty_history_is_not_an_error() {
+        let buffer = tail(&[]);
+        assert!(last_lines(&buffer, 40).is_empty());
     }
 }

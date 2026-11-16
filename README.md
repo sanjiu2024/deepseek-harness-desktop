@@ -6,7 +6,7 @@ persistence — and put our own front end on top. The shell is [Tauri 2](https:/
 binary is a fraction of the Electron build it replaces.
 
 > **Status: works, ships on Windows, not packaged yet.** Real conversations, streaming, tool
-> cards, approvals, a file tree and a terminal. 120 Rust tests, 84 front-end tests, CI green on
+> cards, approvals, a file tree and a terminal. 126 Rust tests, 84 front-end tests, CI green on
 > three jobs. What is missing is written down in [docs/状态.md](docs/状态.md) — including one gap
 > that is *not* fixed rather than quietly omitted.
 
@@ -92,7 +92,7 @@ reaches 18 GB here).
 | Storage | search across sessions, per-session export, a trash that never empties itself |
 | Cleanup | image attachments are collected when nothing references them (6 h grace) |
 | Recovery | a crashed kernel is restarted on the next message, with a bounded retry policy |
-| Diagnostics | logs to `<dsh_home>/logs/desktop.log.<date>`, panics included, 14-day retention |
+| Diagnostics | logs to `<dsh_home>/logs/desktop.log.<date>`, panics and kernel crash output included, 14-day retention |
 
 ## Size, honestly
 
@@ -108,7 +108,7 @@ built or signed yet** — that is the largest remaining piece of work.
 ## Tests
 
 ```bash
-cargo test --workspace --release     # 120: runtime 32+2+2+5+1+1+1 · store 48+1 · native 16+4 · app 6
+cargo test --workspace --release     # 126: runtime 35+2+2+5+1+1+1 · store 48+1 · native 21+4 · app 6
 pnpm --filter @dsh-desktop/app test  # 84
 pnpm smoke:app                       # the real binary, headless: front end loaded? kernel? store?
 ```
