@@ -40,7 +40,8 @@ fn a_shell_echoes_what_it_is_given() {
     .expect("spawn a shell");
     eprintln!("spawned");
 
-    pty.write("echo DSH-PTY-OK\r\n".as_bytes()).expect("write");
+    let command = format!("{}{}", echo_command("DSH-PTY-OK"), enter());
+    pty.write(command.as_bytes()).expect("write");
     eprintln!("wrote");
 
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -102,9 +103,10 @@ fn a_burst_of_output_is_coalesced() {
         "$line = 'x' * 60; 1..500 | ForEach-Object { $line }; Write-Output ('DSH' + '-BURST' + '-END')"
             .to_owned()
     } else {
-        format!(
-            "i=0; while [ $i -lt 500 ]; do printf '%060d\\n' 0; i=$((i+1)); done; echo 'DSH'-'BURST'-'END'"
-        )
+        // `echo 'DSH'-'BURST'-'END'` prints the three words joined, so the literal marker never
+        // appears in the command line we send.
+        "i=0; while [ $i -lt 500 ]; do printf '%060d\\n' 0; i=$((i+1)); done; echo 'DSH'-'BURST'-'END'"
+            .to_owned()
     };
     pty.write(format!("{burst}{}", enter()).as_bytes())
         .expect("write");
