@@ -4,9 +4,12 @@
 //! reader hands them over without mangling multi-byte output. That last part is why the reader
 //! emits `Vec<u8>` rather than `String`: a UTF-8 sequence can split across two reads.
 
+// The two data-path tests are Windows-only (see below), so these are unused on unix.
+#[cfg_attr(not(windows), allow(unused_imports))]
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+#[cfg_attr(not(windows), allow(unused_imports))]
 use dsh_native::pty::{Pty, PtyEvent, PtySize};
 
 /// The line ending the shell in front of us expects.
@@ -14,6 +17,7 @@ use dsh_native::pty::{Pty, PtyEvent, PtySize};
 /// Windows gets PowerShell (`\r\n`), everything else gets `sh` (`\n`). Sending the wrong one
 /// is not a rounding error: `\r` becomes part of the last word on unix, and the command is
 /// not what the test thinks it sent.
+#[cfg(windows)]
 fn enter() -> &'static str {
     if cfg!(windows) { "\r\n" } else { "\n" }
 }
@@ -22,6 +26,7 @@ fn enter() -> &'static str {
 ///
 /// The PTY layer is platform-neutral; the *tests* were not — they hard-coded PowerShell and
 /// failed the moment CI ran them on Linux.
+#[cfg(windows)]
 fn echo_command(text: &str) -> String {
     if cfg!(windows) {
         format!("Write-Output '{text}'")
