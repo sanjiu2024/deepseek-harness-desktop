@@ -17,6 +17,8 @@
 //! v0→v4 migration chain: an unrecognised `version` is reported as unreadable
 //! rather than translated.
 
+pub mod attachments;
+
 use std::path::{Path, PathBuf};
 
 mod export;

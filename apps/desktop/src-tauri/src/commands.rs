@@ -554,6 +554,8 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         session_purge,
         session_fork,
         session_stats,
+        attachments_report,
+        attachments_gc,
         session_trash,
         session_empty_trash,
         session_export,
@@ -815,4 +817,34 @@ pub async fn session_prompt_blocks(
         .call("session/prompt", params, None)
         .await
         .map_err(|error| error.to_string())
+}
+
+/// How much room the kernel's attachment store takes, and what of it is garbage.
+///
+/// Reads; never deletes. `dryRun` defaults to true so a UI can show the number before offering
+/// the button.
+#[tauri::command]
+pub fn attachments_report(
+    state: State<'_, AppState>,
+) -> Result<dsh_store::attachments::AttachmentsReport, String> {
+    dsh_store::attachments::collect(&state.dsh_home, true).map_err(|error| error.to_string())
+}
+
+/// Remove attachment objects no session references any more.
+///
+/// Two guards live in the store: an object mentioned by any session log is kept, and an object
+/// younger than the grace period is kept because a prompt may be mid-flight.
+#[tauri::command]
+pub fn attachments_gc(
+    state: State<'_, AppState>,
+) -> Result<dsh_store::attachments::AttachmentsReport, String> {
+    let report = dsh_store::attachments::collect(&state.dsh_home, false)
+        .map_err(|error| error.to_string())?;
+    tracing::info!(
+        target: "dsh_desktop_app",
+        removed = report.removed,
+        bytes = report.removed_bytes,
+        "attachments_gc"
+    );
+    Ok(report)
 }

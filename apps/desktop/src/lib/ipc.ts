@@ -161,6 +161,20 @@ export interface ForkOutcome {
   path: string
 }
 
+/** 内核附件库的占用，以及其中没人引用的部分。每个字段都是实测值。 */
+export interface AttachmentsReport {
+  objects: number
+  bytes: number
+  referenced: number
+  unreferenced: number
+  unreferencedBytes: number
+  /** 因为太新而留下的（可能是正在进行的 turn）。 */
+  keptRecent: number
+  /** 本次实际删除，dry run 时为 0。 */
+  removed: number
+  removedBytes: number
+}
+
 export const ipc = {
   appInfo: (): Promise<AppInfo> => invoke<AppInfo>('app_info'),
   kernelPaths: (): Promise<KernelPaths> => invoke<KernelPaths>('kernel_paths'),
@@ -214,6 +228,12 @@ export const ipc = {
     invoke<ForkOutcome>('session_fork', { id, title }),
   /** What is in the trash, with sizes. */
   sessionStats: (): Promise<StorageStats> => invoke<StorageStats>('session_stats'),
+  /** 只看不删。 */
+  attachmentsReport: (): Promise<AttachmentsReport> =>
+    invoke<AttachmentsReport>('attachments_report'),
+  /** 删除无人引用的附件对象；太新的会留下。 */
+  attachmentsGc: (): Promise<AttachmentsReport> =>
+    invoke<AttachmentsReport>('attachments_gc'),
   sessionTrash: (): Promise<TrashEntry[]> => invoke<TrashEntry[]>('session_trash'),
   /** Empty the trash; returns how many were removed. */
   sessionEmptyTrash: (): Promise<number> => invoke<number>('session_empty_trash'),

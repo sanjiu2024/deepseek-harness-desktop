@@ -58,6 +58,33 @@ front end                          → 84 (file-tree fixtures follow the new lis
 cargo clippy --workspace --all-targets --release -D warnings → clean
 ```
 
+### Fixed — images would accumulate in the kernel's attachment store forever
+
+Nothing deletes `$DSH_HOME/attachments/v1/objects/`. Deleting a session does not remove its images,
+and deleting the message that carried one does not either. It is invisible and unbounded, and the
+only place to fix it is the client, because the client owns the disk.
+
+`attachments_gc` removes objects no session log mentions, with two guards that make it safe:
+
+1. **Reference means any mention.** All logs are scanned for `sha256:<64 hex>`; the scan is a byte
+   scan, not a parse, because a log from a newer kernel — or one that is half-flushed — must still
+   protect its images. Unreadable is not unused.
+2. **Fresh objects are left alone for 6 hours.** The kernel admits bytes *before* the turn records
+   them in the log, so a just-written object legitimately has no reference yet. Deleting it would
+   cut a prompt in flight.
+
+`attachments_report` runs the same pass as a dry run, so a UI can show the number before offering
+the button.
+
+### Verified
+
+```
+cargo test -p dsh-store --release → 48 + 1 real-home (6 attachment tests)
+cargo test --workspace --release → 114
+内核往返：fork_resume 1 · prompt_blocks 1
+cargo clippy --workspace --all-targets --release -D warnings → exit 0
+```
+
 ### Added — prompts made of blocks, images included
 
 `session_prompt_blocks` sends the kernel's own `contentBlocks` — text, or text plus images. The
