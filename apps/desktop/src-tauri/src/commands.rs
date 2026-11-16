@@ -669,7 +669,7 @@ pub fn session_search(
     state: State<'_, AppState>,
     query: String,
     limit: Option<usize>,
-) -> Result<Vec<dsh_store::SearchHit>, String> {
+) -> Result<dsh_store::SearchOutcome, String> {
     dsh_store::SessionStore::new(&state.dsh_home)
         .search(&query, limit.unwrap_or(40))
         .map_err(|error| error.to_string())

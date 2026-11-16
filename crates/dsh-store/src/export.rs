@@ -52,13 +52,54 @@ pub fn render_markdown(history: &SessionHistory) -> String {
                 out.push_str("- 调用 `");
                 out.push_str(name);
                 out.push_str("` `");
-                out.push_str(&arguments);
+                out.push_str(&truncate(&arguments, ARGUMENT_PREVIEW));
                 out.push_str("`\n");
+                // The call id is what pairs a result with its call; without it the transcript
+                // shows a question and never the answer.
+                if let Some(call_id) = event.data.get("callId").and_then(serde_json::Value::as_str)
+                {
+                    out.push_str("  <!-- ");
+                    out.push_str(call_id);
+                    out.push_str(" -->\n");
+                }
+            }
+            "tool/result" => {
+                // Results were missing from the transcript entirely: the export listed what the
+                // model asked for and never what came back, which reads like a plan nobody ran.
+                if let Some(text) = message_text(event.data.get("message").unwrap_or(&event.data)) {
+                    let body = truncate(&text, RESULT_PREVIEW);
+                    out.push_str("  ```\n");
+                    for line in body.lines() {
+                        out.push_str("  ");
+                        out.push_str(line);
+                        out.push('\n');
+                    }
+                    out.push_str("  ```\n");
+                }
             }
             _ => {}
         }
     }
     out
+}
+
+/// How much of a tool's arguments to keep. The arguments are usually a command line; a
+/// serialised megabyte of JSON helps nobody read the transcript.
+const ARGUMENT_PREVIEW: usize = 300;
+
+/// How much of a tool's output to keep.
+///
+/// A transcript is for reading, not for archival — the log is the archive. Truncating keeps an
+/// export openable in a text editor after a session with a few hundred tool calls.
+const RESULT_PREVIEW: usize = 2000;
+
+/// Cut `text` to `limit` **characters**, marking that something was removed.
+fn truncate(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_owned();
+    }
+    let cut: String = text.chars().take(limit).collect();
+    format!("{cut}…（截断）")
 }
 
 /// Best-effort text: a plain string, or the concatenated text blocks of a message.
@@ -123,5 +164,57 @@ mod tests {
         ));
         assert!(!markdown.contains("想了很多"), "{markdown}");
         assert!(markdown.contains("结论"));
+    }
+}
+
+#[cfg(test)]
+mod tool_tests {
+    use super::*;
+
+    fn history(raw: &str) -> SessionHistory {
+        let mut lines = raw.lines();
+        let header: crate::SessionHeader =
+            serde_json::from_str(lines.next().expect("header")).expect("header json");
+        let events: Vec<crate::SessionEvent> = lines
+            .map(|line| serde_json::from_str(line).expect("event json"))
+            .collect();
+        SessionHistory {
+            total: events.len(),
+            truncated: false,
+            header,
+            events,
+        }
+    }
+
+    #[test]
+    fn a_tool_result_appears_under_its_call() {
+        // The first version listed calls and never results: the transcript read like a plan
+        // nobody ran.
+        let markdown = render_markdown(&history(
+            r#"{"type":"session","version":4,"id":"a","createdAt":1,"isSeeded":false,"delegationDepth":0}
+{"type":"tool/call","seq":0,"time":2,"data":{"callId":"c1","name":"pwsh","arguments":"{\"command\":\"ls\"}"}}
+{"type":"tool/result","seq":1,"time":3,"data":{"message":{"toolCallId":"c1","content":[{"type":"text","text":"file-a.txt\nfile-b.txt"}]}}}"#,
+        ));
+
+        assert!(markdown.contains("调用 `pwsh`"), "{markdown}");
+        assert!(
+            markdown.contains("file-a.txt"),
+            "the output is in the transcript: {markdown}"
+        );
+    }
+
+    #[test]
+    fn a_huge_output_is_truncated_rather_than_dumped() {
+        let huge = "x".repeat(5000);
+        let markdown = render_markdown(&history(&format!(
+            r#"{{"type":"session","version":4,"id":"a","createdAt":1,"isSeeded":false,"delegationDepth":0}}
+{{"type":"tool/result","seq":0,"time":2,"data":{{"message":{{"content":[{{"type":"text","text":"{huge}"}}]}}}}}}"#
+        )));
+
+        assert!(markdown.contains("（截断）"));
+        assert!(
+            markdown.chars().count() < 4000,
+            "an export should stay openable in an editor"
+        );
     }
 }

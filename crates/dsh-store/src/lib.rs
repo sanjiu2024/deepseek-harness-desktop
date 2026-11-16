@@ -108,6 +108,23 @@ pub struct SessionHistory {
     pub truncated: bool,
 }
 
+/// How far a search will read before giving up.
+///
+/// A search is interactive: it runs while someone types. Reading a gigabyte of transcripts to
+/// answer "where did I write about X" is not a search, it is a batch job nobody asked for.
+pub const SEARCH_BUDGET_BYTES: u64 = 64 * 1024 * 1024;
+
+/// What a search found, and what it cost.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchOutcome {
+    pub hits: Vec<SearchHit>,
+    /// True when the scan stopped early: hit limit or byte budget.
+    pub truncated: bool,
+    /// How many bytes of transcript were read before answering.
+    pub scanned_bytes: u64,
+}
+
 /// One match inside a session.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -215,24 +232,42 @@ impl SessionStore {
     /// an index would be a second thing to keep in sync with files the kernel writes behind our
     /// back, and it would go stale the moment a session is deleted. If this ever gets slow, the
     /// fix is an index **built from** these logs, not a different source of truth.
-    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, StoreError> {
+    pub fn search(&self, query: &str, limit: usize) -> Result<SearchOutcome, StoreError> {
         let needle = query.trim().to_lowercase();
         if needle.is_empty() {
-            return Ok(Vec::new());
+            return Ok(SearchOutcome {
+                hits: Vec::new(),
+                truncated: false,
+                scanned_bytes: 0,
+            });
         }
         let titles = SessionTitles::load(self.home());
         let mut hits = Vec::new();
+        let mut scanned_bytes = 0u64;
+        let mut truncated = false;
 
         for path in self.logs()? {
             // Stop the whole scan once the limit is met: continuing to open and parse the remaining
             // transcripts cannot change the answer, and the caller asked for a page, not for every
             // match in the archive.
             if hits.len() >= limit {
+                truncated = true;
+                break;
+            }
+            // A budget, not a timeout: a scan that takes a second on twelve sessions takes a
+            // core for a minute on a thousand, and the user gets nothing until it finishes.
+            if scanned_bytes >= SEARCH_BUDGET_BYTES {
+                truncated = true;
+                tracing::debug!(target: "dsh_store", scanned_bytes, "search budget reached");
                 break;
             }
             let Ok((header, events)) = read_session(&path) else {
                 continue;
             };
+            // Count what was actually read, so the budget reflects real work.
+            scanned_bytes += std::fs::metadata(&path)
+                .map(|metadata| metadata.len())
+                .unwrap_or(0);
             let title = titles
                 .get(&header.id)
                 .map(str::to_owned)
@@ -269,8 +304,11 @@ impl SessionStore {
         }
 
         hits.sort_by_key(|hit| std::cmp::Reverse(hit.time));
-        // (the hit limit is enforced above; this comment marks where the scan stops)
-        Ok(hits)
+        Ok(SearchOutcome {
+            hits,
+            truncated,
+            scanned_bytes,
+        })
     }
 
     /// Does a session with this id exist on disk?
@@ -982,7 +1020,8 @@ mod search_tests {
 
         let hits = SessionStore::new(&root)
             .search("tauri", 10)
-            .expect("search");
+            .expect("search")
+            .hits;
         let _ = std::fs::remove_dir_all(&root);
 
         assert_eq!(
@@ -1008,7 +1047,8 @@ mod search_tests {
 
         let hits = SessionStore::new(&root)
             .search("tauri", 10)
-            .expect("search");
+            .expect("search")
+            .hits;
         let _ = std::fs::remove_dir_all(&root);
         assert!(hits.is_empty());
     }
@@ -1030,7 +1070,8 @@ mod search_tests {
 
         let hits = SessionStore::new(&root)
             .search("关键字", 10)
-            .expect("search");
+            .expect("search")
+            .hits;
         let _ = std::fs::remove_dir_all(&root);
 
         let snippet = &hits[0].snippet;
@@ -1045,7 +1086,7 @@ mod search_tests {
     #[test]
     fn an_empty_query_matches_nothing_rather_than_everything() {
         let store = SessionStore::new(std::env::temp_dir());
-        assert!(store.search("   ", 10).expect("search").is_empty());
+        assert!(store.search("   ", 10).expect("search").hits.is_empty());
     }
 }
 
@@ -1168,7 +1209,8 @@ mod search_limit_tests {
 
         let hits = SessionStore::new(&root)
             .search("needle", 2)
-            .expect("search");
+            .expect("search")
+            .hits;
         let _ = std::fs::remove_dir_all(&root);
 
         assert_eq!(hits.len(), 2);
@@ -1318,5 +1360,64 @@ mod window_tests {
         assert_eq!(history.events.len(), 5);
         assert!(!history.truncated);
         assert_eq!(history.total, 5);
+    }
+}
+
+#[cfg(test)]
+mod search_budget_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("dsh-budget-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).ok();
+        root
+    }
+
+    fn write_session(root: &Path, id: &str, padding: usize) {
+        let dir = root.join(SESSIONS_DIR).join("--p--").join(id);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let header = format!(
+            r#"{{"type":"session","version":4,"id":"{id}","createdAt":1,"isSeeded":false,"delegationDepth":0}}"#
+        );
+        let filler = "y".repeat(padding);
+        let body = format!(
+            r#"{{"type":"user/message","seq":0,"time":10,"data":{{"content":[{{"type":"text","text":"needle {filler}"}}]}}}}"#
+        );
+        std::fs::write(dir.join("session.v4.jsonl"), format!("{header}\n{body}")).expect("write");
+    }
+
+    #[test]
+    fn the_scan_reports_what_it_read() {
+        let root = scratch("report");
+        write_session(&root, "a", 10);
+
+        let outcome = SessionStore::new(&root)
+            .search("needle", 10)
+            .expect("search");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(outcome.hits.len(), 1);
+        assert!(!outcome.truncated);
+        assert!(outcome.scanned_bytes > 0, "the cost is part of the answer");
+    }
+
+    #[test]
+    fn hitting_the_limit_is_reported_as_truncation() {
+        let root = scratch("limit");
+        for index in 0..4 {
+            write_session(&root, &format!("s{index}"), 10);
+        }
+
+        let outcome = SessionStore::new(&root)
+            .search("needle", 1)
+            .expect("search");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(outcome.hits.len(), 1);
+        assert!(
+            outcome.truncated,
+            "one hit out of four is not a complete answer"
+        );
     }
 }

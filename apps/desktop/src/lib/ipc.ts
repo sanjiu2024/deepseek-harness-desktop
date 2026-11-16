@@ -137,6 +137,14 @@ export interface TrashEntry {
   path: string
 }
 
+export interface SearchOutcome {
+  hits: SearchHit[]
+  /** 扫描提前结束：命中上限或字节预算。 */
+  truncated: boolean
+  /** 为回答这个问题读了多少字节。 */
+  scannedBytes: number
+}
+
 export const ipc = {
   appInfo: (): Promise<AppInfo> => invoke<AppInfo>('app_info'),
   kernelPaths: (): Promise<KernelPaths> => invoke<KernelPaths>('kernel_paths'),
@@ -174,8 +182,8 @@ export const ipc = {
   sessionList: (): Promise<SessionSummary[]> => invoke<SessionSummary[]>('session_list'),
   sessionLoad: (id: string): Promise<SessionHistory> => invoke<SessionHistory>('session_load', { id }),
   /** Full-text search across stored sessions; a scan, not an index. */
-  sessionSearch: (query: string, limit?: number): Promise<SearchHit[]> =>
-    invoke<SearchHit[]>('session_search', { query, limit }),
+  sessionSearch: (query: string, limit?: number): Promise<SearchOutcome> =>
+    invoke<SearchOutcome>('session_search', { query, limit }),
   sessionRename: (id: string, title: string): Promise<void> =>
     invoke<void>('session_rename', { id, title }),
   /** Move a session to trash/ — recoverable. */

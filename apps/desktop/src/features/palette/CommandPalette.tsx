@@ -45,8 +45,9 @@ export function CommandPalette({
     const timer = setTimeout(() => {
       void ipc
         .sessionSearch(needle)
-        .then((hits) => {
-          if (!cancelled) setSearchHits(hits)
+        .then((outcome) => {
+          // Only the hits are rendered;  is for a UI that wants to say so.
+          if (!cancelled) setSearchHits(outcome.hits)
         })
         .catch(() => {})
     }, 200)

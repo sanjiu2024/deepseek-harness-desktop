@@ -103,9 +103,11 @@ describe('command palette', () => {
 describe('command palette — content search', () => {
   it('searches session text once the query is long enough, and opens the hit', async () => {
     const opened: string[] = []
-    invoke.mockResolvedValue([
-      { sessionId: 'a', title: '关于内核', seq: 3, time: 1, snippet: '…怎么配置 Tauri 的窗口…' },
-    ])
+    invoke.mockResolvedValue({
+      hits: [{ sessionId: 'a', title: '关于内核', seq: 3, time: 1, snippet: '…怎么配置 Tauri 的窗口…' }],
+      truncated: false,
+      scannedBytes: 1024,
+    })
     render(
       <CommandPalette
         sessions={[]}

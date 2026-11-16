@@ -58,6 +58,30 @@ front end                          → 84 (file-tree fixtures follow the new lis
 cargo clippy --workspace --all-targets --release -D warnings → clean
 ```
 
+### Performance — search has a byte budget
+
+`session_search` stops after **64 MB of transcript** or when the hit limit is reached, and returns
+`{hits, truncated, scannedBytes}`. A search runs while somebody types; reading a gigabyte of
+history to answer "where did I write about X" is a batch job nobody asked for. Reporting the
+truncation and the cost matters more than the exact number: a page of results that looks complete
+is the failure mode this prevents.
+
+### Fixed — the exported transcript had no tool output
+
+`render_markdown` listed every `tool/call` and dropped every `tool/result`, so an export read like
+a plan nobody ran. Results now appear under their call, indented, truncated to 2000 characters
+with an explicit 截断 marker — a transcript is for reading, the log is the archive. Arguments are
+capped at 300 characters for the same reason, and the call id is kept as an HTML comment so a
+call can still be paired with its result by eye.
+
+### Verified
+
+```
+cargo test -p dsh-store  --release → 35 + 1 real-home (2 budget, 2 export)
+cargo clippy --workspace --all-targets --release -D warnings → exit 0
+front end                          → 84
+```
+
 ### Known gap — the PTY data path on Linux: two hypotheses, both wrong
 
 The diagnostic test on CI reports `SHELL=/bin/bash events=0 bytes=0 exited=None`: the reader
