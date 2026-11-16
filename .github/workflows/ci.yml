@@ -54,6 +54,11 @@ jobs:
       # The kernel is not fetched here: its tests skip themselves without DSH_DESKTOP_HOME,
       # so this job stays offline and fast.
       - run: cargo test --workspace --release
+      # The PTY data path is a recorded gap on Linux. This prints what the runner actually sees
+      # (bytes, exit, output tail) into the log — captured stdout is otherwise swallowed by the
+      # test harness, which is why the first attempt at this diagnosed nothing.
+      - run: cargo test -p dsh-native --release --test pty_smoke -- --nocapture
+        if: always()
 
   smoke:
     name: app smoke (real kernel)
