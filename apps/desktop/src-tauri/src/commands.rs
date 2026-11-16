@@ -541,6 +541,7 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         kernel_answer,
         kernel_diagnostics,
         session_list,
+        session_prompt_blocks,
         session_load,
         session_search,
         settings_get,
@@ -777,4 +778,41 @@ fn uuid_like() -> String {
         .map(|delta| delta.as_nanos())
         .unwrap_or_default();
     format!("{now:x}-{:x}", std::process::id())
+}
+
+/// Send a prompt made of arbitrary blocks — text, images, or both.
+///
+/// Text-only prompts go through `kernel_call` like any other method; this exists because an
+/// image needs its shape validated *before* a kernel process spends a turn discovering the block
+/// is malformed. The heavy work — admitting the bytes into the attachment store and rewriting the
+/// block to a reference — happens inside the kernel.
+#[tauri::command]
+pub async fn session_prompt_blocks(
+    state: State<'_, AppState>,
+    session_id: String,
+    blocks: Vec<dsh_runtime::prompt::ContentBlock>,
+) -> Result<serde_json::Value, String> {
+    dsh_runtime::prompt::validate(&blocks).map_err(|error| error.to_string())?;
+
+    let route = state.current_route();
+    let client = state
+        .pool
+        .existing(&route)
+        .await
+        .ok_or_else(|| "the kernel is not running".to_owned())?;
+    let params = serde_json::json!({
+        "sessionId": session_id,
+        "contentBlocks": blocks,
+    });
+    ensure_known_session(&state, &client, &route, "session/prompt", &params).await;
+    tracing::info!(
+        target: "dsh_desktop_app",
+        session = %session_id,
+        blocks = blocks.len(),
+        "session_prompt_blocks"
+    );
+    client
+        .call("session/prompt", params, None)
+        .await
+        .map_err(|error| error.to_string())
 }

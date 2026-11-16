@@ -58,6 +58,35 @@ front end                          → 84 (file-tree fixtures follow the new lis
 cargo clippy --workspace --all-targets --release -D warnings → clean
 ```
 
+### Added — prompts made of blocks, images included
+
+`session_prompt_blocks` sends the kernel's own `contentBlocks` — text, or text plus images. The
+shape is validated in Rust (`crates/dsh-runtime/src/prompt.rs`) **before** a kernel process spends
+a turn discovering it is wrong:
+
+| Refused here | Message |
+| --- | --- |
+| unknown image type | `unsupported image type "image/tiff"; accepted: png, jpeg, webp, gif` |
+| one image over 8 MB decoded | `image is N bytes, over the 8388608 byte limit` |
+| images over 24 MB together | `images total N bytes, over the 25165824 byte budget` |
+| data that is not base64 | `image data is not valid base64` |
+
+Sizes are counted **decoded**, not by string length: four base64 characters are three bytes, so
+counting characters would quietly allow a third more than the stated limit.
+
+Verified against a live kernel (`tests/prompt_blocks.rs`): the block is accepted and the kernel
+returns a `messageId`, which means it admitted the bytes into its attachment store. The test needed
+one correction — `session/prompt` **creates** a session ("already exists" otherwise), so it works
+with a fresh id and never touches the user's conversations.
+
+### Verified
+
+```
+cargo test -p dsh-runtime --release --lib prompt → 7
+DSH_DESKTOP_HOME=… cargo test -p dsh-runtime --test prompt_blocks
+  → [blocks] accepted: {"messageId":"6049f75a-…"}
+```
+
 ### Added — forking a session, verified against a live kernel
 
 `session_fork` copies a session log into a new directory and rewrites the header (new id, new

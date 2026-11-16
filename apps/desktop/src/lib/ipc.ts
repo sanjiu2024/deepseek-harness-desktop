@@ -254,6 +254,24 @@ export async function kernelCall<T = unknown>(
 }
 
 /** Queue one user turn on an SDK session id. */
+/** One block of a prompt. `image` carries base64 — encode it in the front end. */
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; mimeType: string; data: string; name?: string }
+
+/**
+ * Send a prompt made of arbitrary blocks (text, images, or both).
+ *
+ * Validation happens in Rust before anything reaches the kernel: an unsupported image type or an
+ * oversized payload is a thrown error here, not a half-finished turn.
+ */
+export function promptBlocks(
+  sessionId: string,
+  blocks: ContentBlock[],
+): Promise<{ messageId: string }> {
+  return kernelCall('session/prompt', { sessionId, contentBlocks: blocks })
+}
+
 export function promptSession(sessionId: string, text: string): Promise<{ messageId: string }> {
   return kernelCall('session/prompt', {
     sessionId,

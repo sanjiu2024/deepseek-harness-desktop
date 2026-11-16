@@ -39,6 +39,7 @@
 
 pub mod pool;
 pub mod process;
+pub mod prompt;
 pub mod protocol;
 
 pub use pool::{KernelPool, Route};
