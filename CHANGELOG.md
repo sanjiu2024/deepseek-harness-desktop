@@ -58,6 +58,26 @@ front end                          → 84 (file-tree fixtures follow the new lis
 cargo clippy --workspace --all-targets --release -D warnings → clean
 ```
 
+### Added — repository hygiene, audited rather than assumed
+
+`.gitattributes` and `.editorconfig`, plus the ignore rules for one-off scratch scripts. Both files
+exist for the same reason: this repository is developed on Windows and checked by Linux CI, and
+without them a clone with `autocrlf` turns the first `cargo fmt --check` into "the whole tree
+changed" — a diff that says nothing about the code.
+
+The audit behind this (commands are in `docs/工程.md`):
+
+| Item | Result |
+| --- | --- |
+| tracked files | 125 |
+| largest file | `pnpm-lock.yaml`, 141 KB — a lock file, where it belongs |
+| secrets | none: no `sk-`, `ghp_`, `AKIA`, private-key headers, `.env` or `provider.env` tracked |
+| line endings | 116 LF, 0 CRLF |
+| branches | `main` only |
+
+Scratch scripts (`.u1.mjs` and friends) were already deleted by hand each time; `/.[a-z][0-9]*.mjs`
+now catches the one that gets forgotten.
+
 ### Added — `pnpm verify`, one command for everything that must be true
 
 Eight checks in one run: rustfmt, clippy, the Rust suites, the three live-kernel round trips,

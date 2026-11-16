@@ -1,0 +1,31 @@
+# Line endings and binary files, decided once instead of per-clone.
+#
+# This repository is developed on Windows and checked by Linux CI. Without this file, a Windows
+# clone with `core.autocrlf=true` rewrites every text file to CRLF on checkout, and the first
+# `cargo fmt --check` or prettier run reports the whole tree as changed — a diff that says nothing
+# about the code.
+* text=auto eol=lf
+
+# Generated or machine-owned: never diff them, never resolve a conflict by hand.
+pnpm-lock.yaml       -diff linguist-generated
+Cargo.lock           -diff linguist-generated
+apps/desktop/src/lib/ipc.ts  -diff linguist-generated
+
+# Binary assets.
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+
+# Rust and TypeScript are always LF, whatever the platform.
+*.rs   text eol=lf
+*.toml text eol=lf
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.mjs  text eol=lf
