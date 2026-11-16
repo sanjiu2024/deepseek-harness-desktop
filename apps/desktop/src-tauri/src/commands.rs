@@ -638,6 +638,8 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         crate::workspace::pty_close,
         crate::workspace::fs_tree,
         crate::workspace::fs_read,
+        crate::workspace::fs_watch_start,
+        crate::workspace::fs_watch_stop,
         kernel_route_switch,
     ]
 }

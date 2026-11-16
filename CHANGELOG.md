@@ -58,6 +58,32 @@ front end                          → 84 (file-tree fixtures follow the new lis
 cargo clippy --workspace --all-targets --release -D warnings → clean
 ```
 
+### Added — the workspace can tell when it changed
+
+`dsh-native::watch` takes a snapshot of one directory level and diffs it: added, removed, modified.
+`fs_watch_start` / `fs_watch_stop` drive it and emit `fs://changed` with the paths that moved.
+
+**Polling, deliberately.** No `notify` dependency: the side panel shows one level at a time, so the
+watched set is small and 1.5 s is invisible; a native backend behaves differently on every platform;
+and a pure `changed_since` function is testable without racing a filesystem. The cost is bounded and
+stated in the docs — a hundred thousand entries in one directory would be a problem, and that is
+exactly what `fs_tree` refuses.
+
+Starting a watch **replaces** the previous one: the tree expands one level at a time, and two
+watchers would emit the same click twice.
+
+The command and event are wired through Rust and `ipc.ts`; the `useEffect` that consumes them is
+front-end work and is not written. That gap is listed in `docs/状态.md`, not hidden.
+
+### Verified
+
+```
+cargo test -p dsh-native --release --lib watch → 5
+  unchanged · added · deleted (absence is the hard half) · rewritten · missing directory
+cargo test --workspace --release → 131
+cargo clippy --workspace --all-targets --release -D warnings → exit 0
+```
+
 ### Added — a crash now leaves evidence, and big files preview instead of refusing
 
 **Kernel exit carries its last words.** `ExitStatus` gained `tail`: the last 40 stderr lines, which

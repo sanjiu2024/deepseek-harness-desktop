@@ -20,6 +20,15 @@ use crate::state::AppState;
 pub const PTY_DATA_EVENT: &str = "pty://data";
 /// One terminal ended.
 pub const PTY_EXIT_EVENT: &str = "pty://exit";
+/// Emitted when the watched directory level changed. Payload: `{ paths: string[] }`.
+pub const FS_CHANGED_EVENT: &str = "fs://changed";
+
+/// How often the watched directory is re-read.
+///
+/// 1.5 s is invisible to a person watching a tree and cheap for one directory level. A native
+/// event backend would be instant and would also differ on every platform; see `dsh_native::watch`
+/// for why that trade was made the other way.
+const WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// How many shells may exist at once.
 ///
@@ -35,6 +44,15 @@ impl Default for Previews {
     fn default() -> Self {
         Self(dsh_native::Gate::new(dsh_native::DEFAULT_PREVIEW_LIMIT))
     }
+}
+
+/// One directory being watched, and the switch that stops it.
+///
+/// The tree expands one level at a time, so there is exactly one watch at a time: watching every
+/// expanded directory would multiply the polling for no benefit — a collapse re-reads anyway.
+#[derive(Default)]
+pub struct Watcher {
+    current: std::sync::Mutex<Option<(String, std::sync::Arc<std::sync::atomic::AtomicBool>)>>,
 }
 
 #[derive(Default)]
@@ -203,4 +221,76 @@ impl Terminals {
             pty.close();
         }
     }
+}
+
+/// Watch one directory level and emit `fs://changed` when it moves.
+///
+/// Starting a watch replaces the previous one: the tree only ever shows one level at a time, and
+/// two watchers would emit duplicate events for the same click.
+#[tauri::command]
+pub fn fs_watch_start(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    watcher: State<'_, Watcher>,
+    path: Option<String>,
+) -> Result<(), String> {
+    let root = state.workspace.clone();
+    let target = match path {
+        Some(path) => std::path::Path::new(&path).to_path_buf(),
+        None => root.clone(),
+    };
+    // Containment is checked here rather than inside the loop: a watch outside the workspace is a
+    // mistake worth reporting once, not every second and a half.
+    let canonical_root = std::fs::canonicalize(&root).map_err(|error| error.to_string())?;
+    let canonical_target = std::fs::canonicalize(&target).map_err(|error| error.to_string())?;
+    if !canonical_target.starts_with(&canonical_root) {
+        return Err(format!(
+            "拒绝监听工作区之外的目录：{}",
+            canonical_target.display()
+        ));
+    }
+
+    let key = canonical_target.to_string_lossy().into_owned();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let mut current = watcher.current.lock().map_err(|error| error.to_string())?;
+        if let Some((previous, previous_stop)) = current.take() {
+            previous_stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            tracing::debug!(target: "dsh_desktop_app", path = %previous, "fs_watch replaced");
+        }
+        *current = Some((key.clone(), std::sync::Arc::clone(&stop)));
+    }
+
+    std::thread::spawn(move || {
+        let mut snapshot = dsh_native::watch::scan(&canonical_target);
+        while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            std::thread::sleep(WATCH_INTERVAL);
+            if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+            let next = dsh_native::watch::scan(&canonical_target);
+            let changed = next.changed_since(&snapshot);
+            snapshot = next;
+            if changed.is_empty() {
+                continue;
+            }
+            let paths: Vec<String> = changed
+                .into_iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            let _ = app.emit(FS_CHANGED_EVENT, serde_json::json!({ "paths": paths }));
+        }
+        tracing::debug!(target: "dsh_desktop_app", path = %key, "fs_watch stopped");
+    });
+    Ok(())
+}
+
+/// Stop watching. Called when the panel closes or the tree collapses.
+#[tauri::command]
+pub fn fs_watch_stop(watcher: State<'_, Watcher>) -> Result<(), String> {
+    let mut current = watcher.current.lock().map_err(|error| error.to_string())?;
+    if let Some((_, stop)) = current.take() {
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(())
 }

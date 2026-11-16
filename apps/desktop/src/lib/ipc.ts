@@ -199,6 +199,10 @@ export const ipc = {
     invoke<SettingsSnapshot>('settings_set_secret', { name, value }),
   settingsSet: (provider: string, model: string): Promise<SettingsSnapshot> =>
     invoke<SettingsSnapshot>('settings_set', { provider, model }),
+  /** 开始监听一个目录层；会替换上一个监听。 */
+  fsWatchStart: (path: string | null): Promise<void> =>
+    invoke<void>('fs_watch_start', { path }),
+  fsWatchStop: (): Promise<void> => invoke<void>('fs_watch_stop'),
   fsTree: (
     path: string | null,
     showNoisy = false,
@@ -304,6 +308,13 @@ export function onPtyData(
   handler: (payload: { id: string; data: string }) => void,
 ): Promise<UnlistenFn> {
   return listen<{ id: string; data: string }>('pty://data', (event) => handler(event.payload))
+}
+
+/** 监听目录变化：面板打开时调用，折叠时停掉。 */
+export function onFsChanged(
+  handler: (payload: { paths: string[] }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ paths: string[] }>('fs://changed', (event) => handler(event.payload))
 }
 
 export function onPtyExit(

@@ -9,6 +9,7 @@ pub mod gate;
 pub mod pty;
 pub mod text;
 pub mod tree;
+pub mod watch;
 
 pub use gate::{DEFAULT_PREVIEW_LIMIT, Gate};
 pub use pty::{Pty, PtyEvent, PtySize};
