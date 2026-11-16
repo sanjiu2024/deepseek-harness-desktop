@@ -58,6 +58,27 @@ front end                          → 84 (file-tree fixtures follow the new lis
 cargo clippy --workspace --all-targets --release -D warnings → clean
 ```
 
+### Known gap — the PTY data path on Linux: two hypotheses, both wrong
+
+The diagnostic test on CI reports `SHELL=/bin/bash events=0 bytes=0 exited=None`: the reader
+blocks on the master forever, not a single byte arrives, and the child never exits.
+
+Two changes were made on the theory that they were the cause, and the next CI run refuted both:
+
+| Hypothesis | Change | Outcome |
+| --- | --- | --- |
+| the slave was dropped before the child held it | moved `drop(pair.slave)` after attaching reader and writer | still 0 bytes |
+| the child handle was discarded by `let _child` | the struct now holds `Box<dyn Child>` | still 0 bytes |
+
+Both changes stay — attaching handles before dropping the slave, and keeping a child handle, are
+the more defensible shapes — but the comments now say plainly that **neither is a fix**. What to
+look at next is written down in `docs/状态.md`: whether `openpty` succeeds in the runner,
+what `spawn_command` actually returns, and whether the shell ever gets the pty as its
+controlling terminal.
+
+The point of writing this down is that the next person does not repeat two experiments that
+already have answers.
+
 ### CI — finally green (mostly), and one gap recorded
 
 The workflow had been red on **every** push, nine times, because nobody looked. Three causes, all

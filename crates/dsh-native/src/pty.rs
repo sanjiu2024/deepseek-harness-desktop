@@ -46,8 +46,11 @@ pub struct Pty {
     /// Windows, and on Linux the CI diagnostic showed a reader blocked on a master that never
     /// produced a byte *and* a child that never exited. Keeping the handle also gives `close`
     /// something to wait for.
-    // Never read: the handle IS the point. Holding it keeps the pty slave and the process
-    // bookkeeping alive; dropping it was the Linux bug.
+    // Never read: holding it is the point — a child handle that outlives `spawn` is the
+    // defensible default, and it gives `close` something to wait for.
+    //
+    // This was also tried as the fix for the Linux zero-bytes gap and it did **not** fix it.
+    // Recorded in `docs/状态.md`; do not re-litigate it here without new evidence.
     #[allow(dead_code)]
     child: std::sync::Mutex<Option<Box<dyn portable_pty::Child + Send + Sync>>>,
 }
@@ -79,11 +82,15 @@ impl Pty {
             .spawn_command(command)
             .map_err(|error| error.to_string())?;
 
-        // The slave is kept until the reader and writer are attached.
+        // The slave is dropped only after the reader and writer are attached.
         //
-        // Dropping it first is what portable-pty's examples do, and on Windows it is harmless.
-        // On Linux the CI diagnostic showed exactly zero bytes *and* no exit — a reader blocked
-        // on a master whose slave had already been closed on our side before the child held it.
+        // This ordering was an attempt to fix the Linux "zero bytes" gap, and it did **not** fix
+        // it: the CI diagnostic reported the same `events=0 bytes=0 exited=None` afterwards.
+        // It is kept because attaching first is the more defensible order, not because it is a
+        // fix. The gap itself is recorded in `docs/状态.md`.
+        //
+        // Two hypotheses were tested and both were wrong: this ordering, and holding the child
+        // handle (below). Stop guessing here — see the note.
 
         let mut reader = pair
             .master
