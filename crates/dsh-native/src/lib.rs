@@ -13,4 +13,4 @@ pub mod tree;
 pub use gate::{DEFAULT_PREVIEW_LIMIT, Gate};
 pub use pty::{Pty, PtyEvent, PtySize};
 pub use text::{Decoded, decode};
-pub use tree::{Entry, EntryKind, TreeError};
+pub use tree::{Entry, EntryKind, Order, TreeError};

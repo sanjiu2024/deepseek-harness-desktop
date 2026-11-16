@@ -31,7 +31,7 @@ describe('file tree', () => {
     // One call for the root: children are fetched only when expanded, or a large repository
     // would be walked before the user asks for any of it.
     expect(invoke).toHaveBeenCalledTimes(1)
-    expect(invoke).toHaveBeenCalledWith('fs_tree', { path: null, showNoisy: false })
+    expect(invoke).toHaveBeenCalledWith('fs_tree', { path: null, showNoisy: false, order: 'name' })
   })
 
   it('expands a directory on click and fetches its children', async () => {
@@ -42,7 +42,7 @@ describe('file tree', () => {
 
     await userEvent.click(await screen.findByText('src'))
     expect(await screen.findByText('main.ts')).toBeTruthy()
-    expect(invoke).toHaveBeenLastCalledWith('fs_tree', { path: 'D:/repo/src', showNoisy: false })
+    expect(invoke).toHaveBeenLastCalledWith('fs_tree', { path: 'D:/repo/src', showNoisy: false, order: 'name' })
   })
 
   it('opens a file rather than expanding it', async () => {

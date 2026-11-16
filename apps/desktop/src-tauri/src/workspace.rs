@@ -158,12 +158,14 @@ pub fn fs_tree(
     state: State<'_, AppState>,
     path: Option<String>,
     show_noisy: Option<bool>,
+    order: Option<tree::Order>,
 ) -> Result<tree::Listing, String> {
     let requested = path.unwrap_or_else(|| state.workspace.to_string_lossy().into_owned());
     tree::list(
         &state.workspace,
         std::path::Path::new(&requested),
         show_noisy.unwrap_or(false),
+        order.unwrap_or_default(),
     )
     .map_err(|error| error.to_string())
 }

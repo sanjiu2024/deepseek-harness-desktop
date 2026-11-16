@@ -47,6 +47,22 @@ pub struct Listing {
 /// More than this and nobody is scrolling, they are searching.
 pub const MAX_ENTRIES: usize = 2000;
 
+/// How to order one directory.
+///
+/// Directories first is not a preference to be configured away: a tree whose folders are mixed
+/// into the files is a tree nobody can scan. The choice is what to sort *within* each group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Order {
+    /// Alphabetical — what a file browser does when it has no better idea.
+    #[default]
+    Name,
+    /// Largest first: "what is taking the space" is the usual question in a build folder.
+    Size,
+    /// Newest first: "what did the tool just write".
+    Modified,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum TreeError {
     #[error("path escapes the workspace: {0}")]
@@ -77,7 +93,12 @@ pub const NOISY: &[&str] = &[
 ///
 /// `root` is the workspace. Any request outside it is refused rather than clamped: silently
 /// showing a different directory than the one asked for is worse than an error.
-pub fn list(root: &Path, path: &Path, show_noisy: bool) -> Result<Listing, TreeError> {
+pub fn list(
+    root: &Path,
+    path: &Path,
+    show_noisy: bool,
+    order: Order,
+) -> Result<Listing, TreeError> {
     let root = normalize(root)?;
     let target = if path.as_os_str().is_empty() {
         root.clone()
@@ -133,12 +154,15 @@ pub fn list(root: &Path, path: &Path, show_noisy: bool) -> Result<Listing, TreeE
     }
 
     let truncated = total > entries.len();
+    // Directories first always; the chosen order applies within each group.
     entries.sort_by(|left, right| {
         let left_dir = left.kind == EntryKind::Directory;
         let right_dir = right.kind == EntryKind::Directory;
-        right_dir
-            .cmp(&left_dir)
-            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+        right_dir.cmp(&left_dir).then_with(|| match order {
+            Order::Size => right.size.unwrap_or(0).cmp(&left.size.unwrap_or(0)),
+            Order::Modified => right.modified.unwrap_or(0).cmp(&left.modified.unwrap_or(0)),
+            Order::Name => left.name.to_lowercase().cmp(&right.name.to_lowercase()),
+        })
     });
     Ok(Listing {
         entries,
@@ -201,7 +225,7 @@ mod tests {
     #[test]
     fn lists_directories_first_and_hides_noise() {
         let root = scratch("list");
-        let listing = list(&root, &root, false).expect("list");
+        let listing = list(&root, &root, false, Order::Name).expect("list");
         let _ = std::fs::remove_dir_all(&root);
 
         let names: Vec<&str> = listing
@@ -216,7 +240,7 @@ mod tests {
     #[test]
     fn noise_can_be_shown_on_request() {
         let root = scratch("noisy");
-        let listing = list(&root, &root, true).expect("list");
+        let listing = list(&root, &root, true, Order::Name).expect("list");
         let _ = std::fs::remove_dir_all(&root);
         assert!(
             listing
@@ -231,7 +255,7 @@ mod tests {
         // Silently showing a different directory than the one asked for is worse than failing.
         let root = scratch("escape");
         let outside = std::env::temp_dir();
-        let result = list(&root, &outside, false);
+        let result = list(&root, &outside, false, Order::Name);
         let _ = std::fs::remove_dir_all(&root);
         assert!(matches!(result, Err(TreeError::OutsideWorkspace(_))));
     }
@@ -279,7 +303,7 @@ mod cap_tests {
         // A build output folder is exactly this shape. Returning every entry turns one call
         // into megabytes that no tree view can render.
         let root = flat_dir("big", MAX_ENTRIES + 25);
-        let listing = list(&root, &root, false).expect("list");
+        let listing = list(&root, &root, false, Order::Name).expect("list");
         let _ = std::fs::remove_dir_all(&root);
 
         assert_eq!(listing.entries.len(), MAX_ENTRIES);
@@ -294,11 +318,64 @@ mod cap_tests {
     #[test]
     fn a_small_directory_is_not_truncated() {
         let root = flat_dir("small", 3);
-        let listing = list(&root, &root, false).expect("list");
+        let listing = list(&root, &root, false, Order::Name).expect("list");
         let _ = std::fs::remove_dir_all(&root);
 
         assert_eq!(listing.entries.len(), 3);
         assert!(!listing.truncated);
         assert_eq!(listing.total, 3);
+    }
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::*;
+
+    // One directory per test: they run in parallel, and a shared scratch was deleted by the
+    // faster one while the slower was still reading it.
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("dsh-order-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("dir-small")).expect("scratch");
+        std::fs::create_dir_all(root.join("dir-big")).expect("scratch");
+        std::fs::write(root.join("small.txt"), b"x").expect("write");
+        std::fs::write(root.join("big.txt"), vec![b'x'; 4096]).expect("write");
+        root
+    }
+
+    #[test]
+    fn size_order_puts_the_biggest_first_within_each_group() {
+        let root = scratch("size");
+        let listing = list(&root, &root, false, Order::Size).expect("list");
+        let _ = std::fs::remove_dir_all(&root);
+
+        let names: Vec<&str> = listing
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        // Directories first regardless of order — a tree with folders mixed into files is one
+        // nobody can scan.
+        assert!(listing.entries[0].kind == EntryKind::Directory);
+        assert!(
+            names.iter().position(|name| *name == "big.txt")
+                < names.iter().position(|name| *name == "small.txt"),
+            "largest first within files: {names:?}"
+        );
+    }
+
+    #[test]
+    fn name_order_is_the_default_and_alphabetical() {
+        let root = scratch("name");
+        let listing = list(&root, &root, false, Order::default()).expect("list");
+        let _ = std::fs::remove_dir_all(&root);
+
+        let files: Vec<&str> = listing
+            .entries
+            .iter()
+            .filter(|entry| entry.kind != EntryKind::Directory)
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert_eq!(files, vec!["big.txt", "small.txt"]);
     }
 }

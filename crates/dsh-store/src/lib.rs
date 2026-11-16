@@ -138,6 +138,28 @@ pub struct SearchHit {
     pub snippet: String,
 }
 
+/// What the store occupies, in one answer.
+///
+/// Exists because "my disk is full" is a question a user asks about this app, and the honest
+/// answer is a number, not a tree of directories to add up by hand. Every field is measured,
+/// never estimated.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageStats {
+    /// Readable sessions, the same count `list` returns.
+    pub sessions: usize,
+    /// Bytes under `sessions/`.
+    pub session_bytes: u64,
+    /// Sessions sitting in `trash/`.
+    pub trash_entries: usize,
+    /// Bytes under `trash/`.
+    pub trash_bytes: u64,
+    /// Newest session's last activity, milliseconds since the epoch.
+    pub newest_activity: Option<i64>,
+    /// Oldest session's last activity.
+    pub oldest_activity: Option<i64>,
+}
+
 /// One session sitting in the trash.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -366,6 +388,42 @@ impl SessionStore {
         let mut titles = SessionTitles::load(self.home());
         titles.set(id, "").map_err(StoreError::Overlay)?;
         Ok(())
+    }
+
+    /// Count and measure everything the store holds.
+    ///
+    /// One pass over headers plus directory sizes. It does not read transcripts: the question is
+    /// "how much room does this take", and the answer is a byte count, not the content.
+    pub fn stats(&self) -> Result<StorageStats, StoreError> {
+        let mut sessions = 0usize;
+        let mut session_bytes = 0u64;
+        let mut newest: Option<i64> = None;
+        let mut oldest: Option<i64> = None;
+
+        for path in self.logs()? {
+            let Ok(header) = read_header(&path) else {
+                continue;
+            };
+            sessions += 1;
+            // The whole session directory, not just the log file: there can be more in it.
+            if let Some(dir) = path.parent() {
+                session_bytes += directory_bytes(dir);
+            }
+            let updated = summarize_cheap(&header, &path).updated_at;
+            newest = Some(newest.map_or(updated, |current: i64| current.max(updated)));
+            oldest = Some(oldest.map_or(updated, |current: i64| current.min(updated)));
+        }
+
+        let trash = self.trash()?;
+        let trash_bytes = trash.iter().map(|entry| entry.bytes).sum();
+        Ok(StorageStats {
+            sessions,
+            session_bytes,
+            trash_entries: trash.len(),
+            trash_bytes,
+            newest_activity: newest,
+            oldest_activity: oldest,
+        })
     }
 
     /// What is currently in the trash.
@@ -1418,6 +1476,73 @@ mod search_budget_tests {
         assert!(
             outcome.truncated,
             "one hit out of four is not a complete answer"
+        );
+    }
+}
+
+#[cfg(test)]
+mod stats_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("dsh-stats-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).ok();
+        root
+    }
+
+    fn write_session(root: &Path, id: &str, padding: usize, time: i64) {
+        let dir = root.join(SESSIONS_DIR).join("--p--").join(id);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let header = format!(
+            r#"{{"type":"session","version":4,"id":"{id}","createdAt":1,"isSeeded":false,"delegationDepth":0}}"#
+        );
+        let body = format!(
+            r#"{{"type":"user/message","seq":0,"time":{time},"data":{{"content":[{{"type":"text","text":"{}"}}]}}}}"#,
+            "x".repeat(padding)
+        );
+        std::fs::write(dir.join("session.v4.jsonl"), format!("{header}\n{body}")).expect("write");
+    }
+
+    #[test]
+    fn measures_sessions_and_trash_together() {
+        let root = scratch("both");
+        write_session(&root, "a", 1000, 10);
+        write_session(&root, "b", 1000, 20);
+        let store = SessionStore::new(&root);
+        store.delete("b").expect("delete");
+
+        let stats = store.stats().expect("stats");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(stats.sessions, 1);
+        assert!(
+            stats.session_bytes > 1000,
+            "the directory counts: {}",
+            stats.session_bytes
+        );
+        assert_eq!(stats.trash_entries, 1);
+        assert!(
+            stats.trash_bytes > 1000,
+            "the trash counts too: {}",
+            stats.trash_bytes
+        );
+        assert_eq!(stats.newest_activity, Some(10));
+        assert_eq!(stats.oldest_activity, Some(10));
+    }
+
+    #[test]
+    fn an_empty_store_reports_zeroes_not_an_error() {
+        let root = scratch("empty");
+        let stats = SessionStore::new(&root).stats().expect("stats");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(stats.sessions, 0);
+        assert_eq!(stats.session_bytes, 0);
+        assert_eq!(stats.trash_entries, 0);
+        assert_eq!(
+            stats.newest_activity, None,
+            "no sessions means no activity to report"
         );
     }
 }

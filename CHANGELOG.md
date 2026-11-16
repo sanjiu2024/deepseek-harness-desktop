@@ -58,6 +58,28 @@ front end                          → 84 (file-tree fixtures follow the new lis
 cargo clippy --workspace --all-targets --release -D warnings → clean
 ```
 
+### Added — storage usage in one number, and a configurable tree order
+
+- `session_stats` answers "how much room does this take" with measured values: session count,
+  bytes under `sessions/`, trash entries and bytes, and the newest/oldest activity timestamps.
+  One pass over headers plus directory sizes — it never reads a transcript, because the question
+  is about space, not content.
+- `fs_tree` takes `order`: `name` (default), `size`, `modified`. **Directories stay first
+  regardless** — a tree with folders mixed into files is one nobody can scan; the parameter only
+  decides how each group is sorted inside.
+
+### Verified
+
+```
+cargo test -p dsh-store  --release → 37 + 1 real-home (2 stats)
+cargo test -p dsh-native --release → 16 + 4 pty (2 order)
+cargo clippy --workspace --all-targets --release -D warnings → exit 0
+front end                          → 84 (fsTree assertions follow the new argument)
+```
+
+Two tests were racing over one scratch directory and one clippy lint wanted `#[derive(Default)]`
+instead of a hand-written impl — both fixed in place rather than papered over.
+
 ### Performance — search has a byte budget
 
 `session_search` stops after **64 MB of transcript** or when the hit limit is reached, and returns

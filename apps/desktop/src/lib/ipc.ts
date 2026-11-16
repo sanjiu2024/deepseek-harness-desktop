@@ -145,6 +145,16 @@ export interface SearchOutcome {
   scannedBytes: number
 }
 
+/** 存储占用：会话、回收站、时间跨度。每个字段都是实测值。 */
+export interface StorageStats {
+  sessions: number
+  sessionBytes: number
+  trashEntries: number
+  trashBytes: number
+  newestActivity: number | null
+  oldestActivity: number | null
+}
+
 export const ipc = {
   appInfo: (): Promise<AppInfo> => invoke<AppInfo>('app_info'),
   kernelPaths: (): Promise<KernelPaths> => invoke<KernelPaths>('kernel_paths'),
@@ -169,8 +179,11 @@ export const ipc = {
     invoke<SettingsSnapshot>('settings_set_secret', { name, value }),
   settingsSet: (provider: string, model: string): Promise<SettingsSnapshot> =>
     invoke<SettingsSnapshot>('settings_set', { provider, model }),
-  fsTree: (path: string | null, showNoisy = false): Promise<TreeListing> =>
-    invoke<TreeListing>('fs_tree', { path, showNoisy }),
+  fsTree: (
+    path: string | null,
+    showNoisy = false,
+    order: 'name' | 'size' | 'modified' = 'name',
+  ): Promise<TreeListing> => invoke<TreeListing>('fs_tree', { path, showNoisy, order }),
   fsRead: (path: string, maxBytes?: number): Promise<FilePreview> =>
     invoke<FilePreview>('fs_read', { path, maxBytes }),
   ptyOpen: (id: string, rows: number, cols: number): Promise<{ id: string; shell: string }> =>
@@ -191,6 +204,7 @@ export const ipc = {
   /** Remove a session for good. Nothing recovers this. */
   sessionPurge: (id: string): Promise<void> => invoke<void>('session_purge', { id }),
   /** What is in the trash, with sizes. */
+  sessionStats: (): Promise<StorageStats> => invoke<StorageStats>('session_stats'),
   sessionTrash: (): Promise<TrashEntry[]> => invoke<TrashEntry[]>('session_trash'),
   /** Empty the trash; returns how many were removed. */
   sessionEmptyTrash: (): Promise<number> => invoke<number>('session_empty_trash'),

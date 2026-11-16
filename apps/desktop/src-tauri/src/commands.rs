@@ -551,6 +551,7 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         session_rename,
         session_delete,
         session_purge,
+        session_stats,
         session_trash,
         session_empty_trash,
         session_export,
@@ -739,5 +740,13 @@ pub fn session_empty_trash(state: State<'_, AppState>) -> Result<usize, String> 
     tracing::warn!(target: "dsh_desktop_app", "session_empty_trash");
     dsh_store::SessionStore::new(&state.dsh_home)
         .empty_trash()
+        .map_err(|error| error.to_string())
+}
+
+/// How much room the session store takes.
+#[tauri::command]
+pub fn session_stats(state: State<'_, AppState>) -> Result<dsh_store::StorageStats, String> {
+    dsh_store::SessionStore::new(&state.dsh_home)
+        .stats()
         .map_err(|error| error.to_string())
 }
