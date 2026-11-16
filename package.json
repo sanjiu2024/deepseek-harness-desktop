@@ -30,6 +30,7 @@
     "clean:apply": "node scripts/clean.mjs --apply",
     "app:build": "cargo build --release -p dsh-desktop-app",
     "verify": "node scripts/verify.mjs",
-    "verify:fast": "node scripts/verify.mjs --fast"
+    "verify:fast": "node scripts/verify.mjs --fast",
+    "audit:api": "node scripts/audit-kernel-api.mjs"
   }
 }

@@ -18,6 +18,12 @@ pub const KERNEL_EVENT: &str = "kernel://message";
 pub const KERNEL_LAGGED_EVENT: &str = "kernel://lagged";
 /// Emitted when the kernel process is gone.
 pub const KERNEL_EXIT_EVENT: &str = "kernel://exit";
+/// The agent started touching a file. Payload: .
+pub const IDE_ACTIVE_EVENT: &str = "ide://active";
+/// A file changed, with line-level hunks. Payload: .
+pub const IDE_EDIT_EVENT: &str = "ide://edit";
+/// The turn ended: every file it changed. Payload: .
+pub const IDE_CHANGES_EVENT: &str = "ide://changes";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -372,6 +378,13 @@ fn forward_exit(app: &AppHandle, client: &KernelClient) {
 }
 
 fn emit(app: &AppHandle, frame: Incoming) {
+    // The IDE view rides on the same frames the transcript already gets, so there is one path to
+    // the kernel rather than two that can disagree.
+    if let Incoming::Notification { method, params } = &frame
+        && method == "session.event"
+    {
+        observe_session_event(app, params);
+    }
     // A serialisation failure here means the wire held something we cannot
     // describe; losing one frame beats crashing the forwarder.
     match serde_json::to_value(frame) {
@@ -613,6 +626,10 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         kernel_diagnostics,
         session_list,
         session_prompt_blocks,
+        session_wait,
+        session_working_directory_get,
+        session_working_directory_set,
+        ide_state,
         session_load,
         session_search,
         settings_get,
@@ -920,4 +937,140 @@ pub fn attachments_gc(
         "attachments_gc"
     );
     Ok(report)
+}
+
+/// Wait for a session's current turn to finish.
+///
+/// The kernel answers when the session goes quiet, so this is the only way to "send a prompt and
+/// know it is done" without watching events. Useful for scripting and for a UI that wants a
+/// blocking send; the timeout is the caller's, because only the caller knows how long is too long.
+#[tauri::command]
+pub async fn session_wait(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    timeout_ms: Option<u64>,
+) -> Result<serde_json::Value, String> {
+    let route = state.current_route();
+    let client = ensure_ready(&app, &state, &route).await?;
+    client
+        .call(
+            "session/wait",
+            serde_json::json!({ "sessionId": session_id }),
+            Some(Duration::from_millis(timeout_ms.unwrap_or(120_000))),
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// The working directory the kernel has for a session.
+#[tauri::command]
+pub async fn session_working_directory_get(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<serde_json::Value, String> {
+    let route = state.current_route();
+    let client = ensure_ready(&app, &state, &route).await?;
+    client
+        .call(
+            "session/working-directory/get",
+            serde_json::json!({ "sessionId": session_id }),
+            None,
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// Move a session to another working directory — "switch project" for an existing conversation.
+///
+/// The path is checked against the workspace root first: the kernel would happily accept any path,
+/// and a session quietly pointed at `C:\` would give tools access nobody intended.
+#[tauri::command]
+pub async fn session_working_directory_set(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> Result<serde_json::Value, String> {
+    let root = std::fs::canonicalize(&state.workspace).map_err(|error| error.to_string())?;
+    let target =
+        std::fs::canonicalize(&path).map_err(|error| format!("目录不存在或不可读：{error}"))?;
+    if !target.starts_with(&root) {
+        return Err(format!("拒绝把会话挪到工作区之外：{}", target.display()));
+    }
+    let route = state.current_route();
+    let client = ensure_ready(&app, &state, &route).await?;
+    tracing::info!(target: "dsh_desktop_app", session = %session_id, dir = %target.display(), "session_working_directory_set");
+    client
+        .call(
+            "session/working-directory/set",
+            serde_json::json!({
+                "sessionId": session_id,
+                "path": target.to_string_lossy(),
+            }),
+            None,
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+/// The IDE view's entry point: one durable session event at a time.
+///
+/// Two events matter — a tool call that names a file, and the result that closes it. Everything
+/// else returns immediately: the transcript path already handles the rest, and this must stay
+/// cheap because every event passes through here.
+fn observe_session_event(app: &AppHandle, params: &serde_json::Value) {
+    let (Some(ide), Some(state)) = (
+        app.try_state::<crate::ide::IdeState>(),
+        app.try_state::<AppState>(),
+    ) else {
+        return;
+    };
+
+    // Decoding and state live in `crate::ide`, which a test can drive with a real captured event.
+    // This function only turns the result into window events — one path, and that path is tested.
+    for event in crate::ide::observe(&ide, &state.workspace, params) {
+        match event {
+            crate::ide::IdeEvent::Active(active) => {
+                let _ = app.emit(IDE_ACTIVE_EVENT, active);
+            }
+            crate::ide::IdeEvent::Edit {
+                session_id,
+                call_id,
+                file,
+                diff,
+            } => {
+                let _ = app.emit(
+                    IDE_EDIT_EVENT,
+                    serde_json::json!({
+                        "sessionId": session_id,
+                        "callId": call_id,
+                        "file": file,
+                        "diff": diff,
+                    }),
+                );
+            }
+            crate::ide::IdeEvent::Changes { session_id, files } => {
+                let _ = app.emit(
+                    IDE_CHANGES_EVENT,
+                    serde_json::json!({ "sessionId": session_id, "files": files }),
+                );
+            }
+        }
+    }
+}
+
+/// What the agent is editing right now, for a panel that opens mid-turn.
+#[tauri::command]
+pub fn ide_state(
+    state: State<'_, AppState>,
+    ide: State<'_, crate::ide::IdeState>,
+    session_id: String,
+) -> serde_json::Value {
+    let _ = &state;
+    serde_json::json!({
+        "active": ide.active(),
+        "files": ide.changed(&session_id),
+    })
 }

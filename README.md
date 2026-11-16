@@ -6,7 +6,7 @@ persistence — and put our own front end on top. The shell is [Tauri 2](https:/
 binary is a fraction of the Electron build it replaces.
 
 > **Status: works, ships on Windows, not packaged yet.** Real conversations, streaming, tool
-> cards, approvals, a file tree and a terminal. 131 Rust tests, 84 front-end tests, CI green on
+> cards, approvals, a file tree and a terminal. 150 Rust tests, 84 front-end tests, CI green on
 > three jobs. What is missing is written down in [docs/状态.md](docs/状态.md) — including one gap
 > that is *not* fixed rather than quietly omitted.
 
@@ -16,7 +16,7 @@ binary is a fraction of the Electron build it replaces.
 │  sessions · streamed answers · tool cards     │  (someone else's job — see docs/接口.md)
 │  approvals · settings · file tree · terminal  │
 └───────────────────┬──────────────────────────┘
-                    │ invoke() / listen()  — 37 commands, 6 events
+                    │ invoke() / listen()  — 41 commands, 9 events
 ┌───────────────────┴──────────────────────────┐
 │  Rust core                                   │
 │  kernel pool · NDJSON wire · session store    │
@@ -90,6 +90,7 @@ reaches 18 GB here).
 | Models | one kernel per route; switching a model starts a second process and leaves the first running |
 | Images | `session_prompt_blocks` accepts base64 image blocks; validation happens in Rust before the kernel sees them |
 | Workspace | file tree with preview and insert-path, a real PTY, and a change watcher — all in one side panel |
+| Live edits | `ide://active`, `ide://edit`, `ide://changes` — which file the agent is editing and the exact lines that moved (backend only) |
 | Storage | search across sessions, per-session export, a trash that never empties itself |
 | Cleanup | image attachments are collected when nothing references them (6 h grace) |
 | Recovery | a crashed kernel is restarted on the next message, with a bounded retry policy |

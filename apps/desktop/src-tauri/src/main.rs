@@ -2,6 +2,7 @@
 //! everything with behaviour lives in `crates/`. See AGENTS.md, "Where code goes".
 
 mod commands;
+mod ide;
 mod state;
 mod workspace;
 
@@ -164,6 +165,7 @@ fn main() -> ExitCode {
                 app.manage(AppState::resolve(data_dir));
                 app.manage(workspace::Terminals::default());
                 app.manage(workspace::Watcher::default());
+                app.manage(ide::IdeState::default());
                 app.manage(workspace::Previews::default());
                 Ok(())
             }

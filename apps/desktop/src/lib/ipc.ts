@@ -304,6 +304,74 @@ export function promptSession(sessionId: string, text: string): Promise<{ messag
 }
 
 /** Terminal output. Base64 because a Tauri event is JSON, and xterm wants bytes. */
+/** 一行差异。行号都是 1 起算。 */
+export interface Hunk {
+  oldStart: number
+  newStart: number
+  removed: string[]
+  added: string[]
+  /** 文本被截断（行数仍然精确）。 */
+  truncated: boolean
+}
+
+export interface LineDiff {
+  hunks: Hunk[]
+  deleted: number
+  added: number
+  /** 太大，没做逐行比较。 */
+  coarse: boolean
+}
+
+export interface FileChange {
+  file: string
+  display: string
+  added: number
+  deleted: number
+  coarse: boolean
+}
+
+export interface ActiveEdit {
+  sessionId: string
+  callId: string
+  tool: string
+  file: string
+  display: string
+  existed: boolean
+  /** 这次调用会碰到的所有文件（apply_patch 可能是多个）。 */
+  files: string[]
+}
+
+/** AI 正在改哪个文件。 */
+export function onIdeActive(handler: (payload: ActiveEdit) => void): Promise<UnlistenFn> {
+  return listen<ActiveEdit>('ide://active', (event) => handler(event.payload))
+}
+
+/** 一个文件改完了，带行级差异。 */
+export function onIdeEdit(
+  handler: (payload: { sessionId: string; callId: string; file: string; diff: LineDiff }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ sessionId: string; callId: string; file: string; diff: LineDiff }>(
+    'ide://edit',
+    (event) => handler(event.payload),
+  )
+}
+
+/** 一轮结束：这轮改过的所有文件。 */
+export function onIdeChanges(
+  handler: (payload: { sessionId: string; files: FileChange[] }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ sessionId: string; files: FileChange[] }>('ide://changes', (event) =>
+    handler(event.payload),
+  )
+}
+
+/** 面板打开时先拿一次当前状态，别等下一个事件。 */
+export function ideState(
+  sessionId: string,
+): Promise<{ active: ActiveEdit | null; files: FileChange[] }> {
+  return invoke<{ active: ActiveEdit | null; files: FileChange[] }>('ide_state', { sessionId })
+}
+
 export function onPtyData(
   handler: (payload: { id: string; data: string }) => void,
 ): Promise<UnlistenFn> {

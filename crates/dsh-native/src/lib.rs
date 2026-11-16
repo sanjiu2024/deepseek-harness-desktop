@@ -5,6 +5,7 @@
 //! to leave the workspace; the PTY is a real process, not a command runner — an app that
 //! offers a terminal has to be honest that it is a terminal.
 
+pub mod diff;
 pub mod gate;
 pub mod pty;
 pub mod text;

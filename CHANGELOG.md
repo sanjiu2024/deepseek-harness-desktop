@@ -58,6 +58,41 @@ front end                          → 84 (file-tree fixtures follow the new lis
 cargo clippy --workspace --all-targets --release -D warnings → clean
 ```
 
+### Added — the backend for an IDE-style view of what the agent is editing
+
+Three events, derived from two durable events the kernel already sends:
+
+| event | payload | when |
+| --- | --- | --- |
+| `ide://active` | `ActiveEdit` | an editing tool starts — which file, before it changes |
+| `ide://edit` | `{sessionId, callId, file, diff}` | the call finished — line-level hunks |
+| `ide://changes` | `{sessionId, files}` | the turn ended — every file it touched |
+
+Plus `ide_state` for a panel that opens mid-turn.
+
+**The diff is real, not reported.** A snapshot is taken when the tool call starts and the file is
+re-read when it finishes; the hunks come from comparing those two, so a model that says "done" and
+writes nothing produces no change at all. Tool argument names (`file_path`, `content`, and the
+`*** Update File:` markers inside `patch`) were read out of the kernel's own tool definitions.
+
+`crates/dsh-native/src/diff.rs` does the comparison: common prefix/suffix stripped first, one LCS for
+the rest, a coarse fallback past 4000 lines, and hunk text capped at 400 lines with the counts kept
+exact.
+
+**Tested against real payloads.** One test walks a real `session.v4.jsonl` and asserts the fields the
+parser depends on still exist; another drives the whole path — call, write, result — through
+`ide::observe`. That is why event decoding was moved out of the command layer: a Tauri command cannot
+be tested without a window, and a decoder that cannot be tested is a decoder that drifts.
+
+### Verified
+
+```
+cargo test -p dsh-desktop-app --release ide → 11 (diff 8 · ide 8 · wire 3)
+cargo test --workspace --release             → 150
+cargo clippy --workspace --all-targets --release -D warnings → exit 0
+node scripts/verify.mjs --fast               → 6 passed · 0 failed · 2 skipped
+```
+
 ### Added — repository hygiene, audited rather than assumed
 
 `.gitattributes` and `.editorconfig`, plus the ignore rules for one-off scratch scripts. Both files
