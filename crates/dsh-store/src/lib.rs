@@ -34,6 +34,9 @@ pub use titles::SessionTitles;
 /// materialises a year of history.
 pub const EVENT_WINDOW: usize = 2000;
 
+/// The log file name inside a session directory.
+pub const LOG_NAME: &str = "session.v4.jsonl";
+
 /// The session format generation this build understands.
 pub const CURRENT_FORMAT_VERSION: u32 = 4;
 
@@ -43,24 +46,36 @@ pub const SESSIONS_DIR: &str = "sessions";
 /// The first line of a session log.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct SessionHeader {
+    /// Always `session`. Written back on fork: the kernel validates the first line, and a header
+    /// without this field is "not a session header" as far as it is concerned.
+    #[serde(default = "session_marker", rename = "type")]
+    pub kind: String,
     /// Format generation. Anything but [`CURRENT_FORMAT_VERSION`] is unreadable here.
     pub version: u32,
     pub id: String,
     /// Milliseconds since the Unix epoch.
     #[serde(rename = "createdAt")]
     pub created_at: i64,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     /// Set when this session was spawned by a subagent tool.
-    #[serde(default, rename = "parentSession")]
+    #[serde(
+        default,
+        rename = "parentSession",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub parent_session: Option<String>,
     #[serde(default, rename = "isSeeded")]
     pub is_seeded: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
     #[serde(default, rename = "delegationDepth")]
     pub delegation_depth: u32,
-    #[serde(default, rename = "agentPreset")]
+    #[serde(
+        default,
+        rename = "agentPreset",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub agent_preset: Option<String>,
 }
 
@@ -160,6 +175,17 @@ pub struct StorageStats {
     pub oldest_activity: Option<i64>,
 }
 
+/// What a fork produced.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForkOutcome {
+    pub id: String,
+    /// The session it came from.
+    pub source: String,
+    /// Where the copy lives, so a UI can show it or move it.
+    pub path: String,
+}
+
 /// One session sitting in the trash.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -187,6 +213,8 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
     #[error("session titles: {0}")]
     Overlay(String),
+    #[error("cannot fork: {0}")]
+    Fork(String),
 }
 
 /// Read-only view of a session root.
@@ -482,6 +510,81 @@ impl SessionStore {
         Ok(removed)
     }
 
+    /// Copy a session into a new one, keeping every event.
+    ///
+    /// "Fork" here means what it means in a notebook: the new session **is** the old one up to
+    /// this moment, and diverges from here. It is done by copying the log and rewriting the
+    /// header id — the events are not replayed through the model, so a fork costs nothing and
+    /// cannot change what the model already said.
+    ///
+    /// The copy lands in the same project directory, because that directory is the kernel's
+    /// notion of "which workspace this session belongs to".
+    pub fn fork(
+        &self,
+        id: &str,
+        new_id: &str,
+        title: Option<&str>,
+    ) -> Result<ForkOutcome, StoreError> {
+        if id == new_id {
+            return Err(StoreError::Fork(
+                "a session cannot be forked onto itself".to_owned(),
+            ));
+        }
+        if self.contains(new_id) {
+            return Err(StoreError::Fork(format!("{new_id} already exists")));
+        }
+
+        let source = self.directory_of(id)?;
+        let project = source
+            .parent()
+            .ok_or_else(|| StoreError::NotFound(id.to_owned()))?;
+        let target = project.join(new_id);
+        if target.exists() {
+            return Err(StoreError::Fork(format!(
+                "{} already exists",
+                target.display()
+            )));
+        }
+
+        let raw = std::fs::read_to_string(source.join(LOG_NAME))?;
+        let mut lines = raw.lines();
+        let first = lines
+            .next()
+            .ok_or_else(|| StoreError::MissingHeader(source.display().to_string()))?;
+
+        let mut header: SessionHeader = serde_json::from_str(first)?;
+        header.id = new_id.to_owned();
+        header.created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|delta| delta.as_millis() as i64)
+            .unwrap_or(header.created_at);
+        // A fork is its own conversation: it was not seeded by a parent run, and it is not a
+        // subagent of the session it came from.
+        header.parent_session = None;
+        header.delegation_depth = 0;
+
+        let mut body = serde_json::to_string(&header)?;
+        body.push('\n');
+        for line in lines {
+            body.push_str(line);
+            body.push('\n');
+        }
+
+        std::fs::create_dir_all(&target)?;
+        write_atomic(&target.join(LOG_NAME), body.as_bytes())?;
+
+        if let Some(title) = title.map(str::trim).filter(|title| !title.is_empty()) {
+            let mut titles = SessionTitles::load(self.home());
+            titles.set(new_id, title).map_err(StoreError::Overlay)?;
+        }
+
+        Ok(ForkOutcome {
+            id: new_id.to_owned(),
+            source: id.to_owned(),
+            path: target.to_string_lossy().into_owned(),
+        })
+    }
+
     /// Remove a session for good. Nothing recovers this.
     pub fn purge(&self, id: &str) -> Result<(), StoreError> {
         let dir = self.directory_of(id)?;
@@ -651,6 +754,11 @@ fn read_session_windowed(
 
     let truncated = total > kept.len();
     Ok((header, kept.into(), total, truncated))
+}
+
+/// The literal every session header starts with.
+fn session_marker() -> String {
+    "session".to_owned()
 }
 
 /// A summary is built without parsing the transcript.
@@ -1543,6 +1651,165 @@ mod stats_tests {
         assert_eq!(
             stats.newest_activity, None,
             "no sessions means no activity to report"
+        );
+    }
+}
+
+#[cfg(test)]
+mod fork_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("dsh-fork-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).ok();
+        root
+    }
+
+    fn write_session(root: &Path, id: &str, events: usize) {
+        let dir = root.join(SESSIONS_DIR).join("--p--").join(id);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let mut body = format!(
+            r#"{{"type":"session","version":4,"id":"{id}","createdAt":1,"isSeeded":false,"delegationDepth":0}}"#
+        );
+        for index in 0..events {
+            body.push_str(&format!(
+                "\n{{\"type\":\"user/message\",\"seq\":{index},\"time\":{},\"data\":{{\"content\":[{{\"type\":\"text\",\"text\":\"m{index}\"}}]}}}}",
+                100 + index
+            ));
+        }
+        std::fs::write(dir.join(LOG_NAME), body).expect("write");
+    }
+
+    #[test]
+    fn a_fork_keeps_every_event_and_gets_its_own_id() {
+        let root = scratch("copy");
+        write_session(&root, "parent", 3);
+        let store = SessionStore::new(&root);
+
+        let fork = store.fork("parent", "child", Some("分支")).expect("fork");
+        let original = store.load("parent").expect("parent");
+        let copy = store.load("child").expect("child");
+        let listed = store.list().expect("list");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(fork.id, "child");
+        assert_eq!(copy.header.id, "child");
+        assert_eq!(
+            copy.events.len(),
+            original.events.len(),
+            "history comes along"
+        );
+        assert_eq!(copy.events[0].seq, 0, "from the first event, not the last");
+        assert!(
+            listed
+                .iter()
+                .any(|entry| entry.id == "child" && entry.title == "分支"),
+            "the fork appears in the list with its title"
+        );
+    }
+
+    #[test]
+    fn the_fork_is_independent_of_its_parent() {
+        // A fork is a new conversation: deleting one must not touch the other.
+        let root = scratch("apart");
+        write_session(&root, "parent", 2);
+        let store = SessionStore::new(&root);
+        store.fork("parent", "child", None).expect("fork");
+
+        store.purge("parent").expect("purge");
+        let copy = store.load("child").expect("the fork survives");
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(copy.events.len(), 2);
+    }
+
+    #[test]
+    fn forking_onto_an_existing_id_is_refused() {
+        let root = scratch("clash");
+        write_session(&root, "parent", 1);
+        write_session(&root, "taken", 1);
+        let store = SessionStore::new(&root);
+
+        let clash = store.fork("parent", "taken", None);
+        let onto_itself = store.fork("parent", "parent", None);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(matches!(clash, Err(StoreError::Fork(_))));
+        assert!(matches!(onto_itself, Err(StoreError::Fork(_))));
+    }
+}
+
+#[cfg(test)]
+mod fork_shape_tests {
+    use super::*;
+
+    #[test]
+    fn the_forked_header_still_starts_with_the_session_marker() {
+        let root = std::env::temp_dir().join(format!("dsh-forkshape-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join(SESSIONS_DIR).join("--p--").join("a");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(
+            dir.join(LOG_NAME),
+            concat!(
+                r#"{"type":"session","version":4,"id":"a","createdAt":1,"isSeeded":false,"delegationDepth":0}"#,
+                "\n",
+                r#"{"type":"user/message","seq":0,"time":2,"data":{"content":[],"role":"user","id":"u1"}}"#,
+                "\n",
+            ),
+        )
+        .expect("write");
+
+        SessionStore::new(&root).fork("a", "b", None).expect("fork");
+        let written = std::fs::read_to_string(
+            root.join(SESSIONS_DIR)
+                .join("--p--")
+                .join("b")
+                .join(LOG_NAME),
+        )
+        .expect("read back");
+        let first = written.lines().next().expect("first line").to_owned();
+        let _ = std::fs::remove_dir_all(&root);
+
+        println!("[probe] {first}");
+        assert!(
+            first.starts_with(r#"{"type":"session""#),
+            "the kernel validates this line: {first}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod header_shape_tests {
+    use super::*;
+
+    #[test]
+    fn a_serialised_header_matches_the_shape_the_kernel_writes() {
+        // The kernel validates the first log line against a strict schema. Writing extra keys —
+        // even as `null` — makes it answer "first line is not a session header", which sounds
+        // like a missing field and is actually a surplus one. Found by resuming a fork against a
+        // real kernel, not by reading the docs.
+        let header = SessionHeader {
+            kind: "session".to_owned(),
+            version: CURRENT_FORMAT_VERSION,
+            id: "a".to_owned(),
+            created_at: 1,
+            cwd: Some("D:/repo".to_owned()),
+            parent_session: None,
+            is_seeded: false,
+            origin: None,
+            delegation_depth: 0,
+            agent_preset: None,
+        };
+
+        let json = serde_json::to_string(&header).expect("serialise");
+        assert!(json.starts_with(r#"{"type":"session""#), "{json}");
+        assert!(!json.contains("null"), "no nulls: {json}");
+        assert!(
+            !json.contains("parentSession")
+                && !json.contains("origin")
+                && !json.contains("agentPreset"),
+            "optional keys are omitted, not null: {json}"
         );
     }
 }

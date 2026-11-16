@@ -13,3 +13,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+# Test-only: one integration test seeds a forked session and asks the kernel to resume it.
+# Dev-only on purpose — `dsh-store` must never depend on the runtime, and the runtime must not
+# depend on the store at runtime either.
+dsh-store = { path = "../dsh-store" }

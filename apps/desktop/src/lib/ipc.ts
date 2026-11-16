@@ -155,6 +155,12 @@ export interface StorageStats {
   oldestActivity: number | null
 }
 
+export interface ForkOutcome {
+  id: string
+  source: string
+  path: string
+}
+
 export const ipc = {
   appInfo: (): Promise<AppInfo> => invoke<AppInfo>('app_info'),
   kernelPaths: (): Promise<KernelPaths> => invoke<KernelPaths>('kernel_paths'),
@@ -203,6 +209,9 @@ export const ipc = {
   sessionDelete: (id: string): Promise<void> => invoke<void>('session_delete', { id }),
   /** Remove a session for good. Nothing recovers this. */
   sessionPurge: (id: string): Promise<void> => invoke<void>('session_purge', { id }),
+  /** Copy a session into a new one. The copy is resumable by the kernel. */
+  sessionFork: (id: string, title?: string): Promise<ForkOutcome> =>
+    invoke<ForkOutcome>('session_fork', { id, title }),
   /** What is in the trash, with sizes. */
   sessionStats: (): Promise<StorageStats> => invoke<StorageStats>('session_stats'),
   sessionTrash: (): Promise<TrashEntry[]> => invoke<TrashEntry[]>('session_trash'),

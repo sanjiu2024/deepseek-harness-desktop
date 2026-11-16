@@ -58,6 +58,34 @@ front end                          → 84 (file-tree fixtures follow the new lis
 cargo clippy --workspace --all-targets --release -D warnings → clean
 ```
 
+### Added — forking a session, verified against a live kernel
+
+`session_fork` copies a session log into a new directory and rewrites the header (new id, new
+timestamp, no parent). The copy is a real session: `crates/dsh-runtime/tests/fork_resume.rs`
+resumes it against a running kernel and only passes if the kernel accepts it.
+
+Getting there took three wrong answers, all of them instructive:
+
+1. **The header had no `type` field.** Our `SessionHeader` is a *read* struct; serialising it back
+   produced a first line that was not a session header at all.
+2. **The copy lived in the wrong project directory.** The kernel groups sessions by a name derived
+   from the cwd, and a copy in the wrong group is reported as a *corrupt log* rather than a
+   missing session.
+3. **Optional fields were serialised as `null`.** The strict schema rejects surplus keys —
+   `parentSession: null` reads as "not a session header", which sounds like a missing field and is
+   actually an extra one. Optional keys are now skipped when empty.
+
+Each is now covered by a test: a header-shape test in `dsh-store`, and the kernel round trip.
+
+### Verified
+
+```
+cargo test -p dsh-store --release → 42 + 1 real-home
+DSH_DESKTOP_HOME=… cargo test -p dsh-runtime --test fork_resume
+  → [fork] the kernel resumed fork-test-33408 (copy of 8e32f9e2-…)
+cargo clippy --workspace --all-targets --release -D warnings → exit 0
+```
+
 ### Added — storage usage in one number, and a configurable tree order
 
 - `session_stats` answers "how much room does this take" with measured values: session count,

@@ -551,6 +551,7 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static
         session_rename,
         session_delete,
         session_purge,
+        session_fork,
         session_stats,
         session_trash,
         session_empty_trash,
@@ -749,4 +750,31 @@ pub fn session_stats(state: State<'_, AppState>) -> Result<dsh_store::StorageSta
     dsh_store::SessionStore::new(&state.dsh_home)
         .stats()
         .map_err(|error| error.to_string())
+}
+
+/// Copy a session into a new one.
+///
+/// The copy is a real session the kernel will resume — verified against a live kernel, not
+/// assumed: a log copied into the right project directory and given a valid header is accepted
+/// exactly like one the kernel wrote itself.
+#[tauri::command]
+pub fn session_fork(
+    state: State<'_, AppState>,
+    id: String,
+    title: Option<String>,
+) -> Result<dsh_store::ForkOutcome, String> {
+    let new_id = format!("fork-{}", uuid_like());
+    tracing::info!(target: "dsh_desktop_app", source = %id, fork = %new_id, "session_fork");
+    dsh_store::SessionStore::new(&state.dsh_home)
+        .fork(&id, &new_id, title.as_deref())
+        .map_err(|error| error.to_string())
+}
+
+/// A unique suffix without pulling in a uuid crate for one call.
+fn uuid_like() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|delta| delta.as_nanos())
+        .unwrap_or_default();
+    format!("{now:x}-{:x}", std::process::id())
 }

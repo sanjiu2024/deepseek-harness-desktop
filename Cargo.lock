@@ -911,6 +911,7 @@ dependencies = [
 name = "dsh-runtime"
 version = "0.12.0"
 dependencies = [
+ "dsh-store",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
