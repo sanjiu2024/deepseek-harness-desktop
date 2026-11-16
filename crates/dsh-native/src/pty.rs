@@ -46,6 +46,9 @@ pub struct Pty {
     /// Windows, and on Linux the CI diagnostic showed a reader blocked on a master that never
     /// produced a byte *and* a child that never exited. Keeping the handle also gives `close`
     /// something to wait for.
+    // Never read: the handle IS the point. Holding it keeps the pty slave and the process
+    // bookkeeping alive; dropping it was the Linux bug.
+    #[allow(dead_code)]
     child: std::sync::Mutex<Option<Box<dyn portable_pty::Child + Send + Sync>>>,
 }
 
