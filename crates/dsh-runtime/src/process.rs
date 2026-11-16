@@ -90,10 +90,7 @@ pub enum RuntimeError {
         message: String,
     },
     #[error("{method} did not answer within {timeout:?}")]
-    Timeout {
-        method: String,
-        timeout: Duration,
-    },
+    Timeout { method: String, timeout: Duration },
     #[error("protocol: {0}")]
     Protocol(#[from] protocol::ProtocolError),
     #[error("io: {0}")]
@@ -177,7 +174,9 @@ impl KernelClient {
         let (exited, _) = broadcast::channel(4);
         let stop_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let pending: Arc<StdMutex<HashMap<u64, PendingCall>>> = Arc::default();
-        let stderr_tail = Arc::new(StdMutex::new(std::collections::VecDeque::with_capacity(STDERR_HISTORY)));
+        let stderr_tail = Arc::new(StdMutex::new(std::collections::VecDeque::with_capacity(
+            STDERR_HISTORY,
+        )));
 
         // Writer: sole owner of stdin.
         tokio::spawn(async move {
@@ -209,7 +208,9 @@ impl KernelClient {
                 loop {
                     {
                         let Ok(mut guard) = child.lock() else { return };
-                        let Some(process) = guard.as_mut() else { return };
+                        let Some(process) = guard.as_mut() else {
+                            return;
+                        };
                         match process.try_wait() {
                             Ok(Some(status)) => {
                                 let _ = exited.send(ExitStatus {
@@ -222,7 +223,10 @@ impl KernelClient {
                             Ok(None) => {}
                             Err(_) => {
                                 // Nothing more can be learned about this process.
-                                let _ = exited.send(ExitStatus { code: None, requested: false });
+                                let _ = exited.send(ExitStatus {
+                                    code: None,
+                                    requested: false,
+                                });
                                 return;
                             }
                         }
@@ -244,9 +248,9 @@ impl KernelClient {
                     }
                     match protocol::parse_frame(&line) {
                         Ok(Incoming::Response { id, payload }) => {
-                            let call = id
-                                .as_number()
-                                .and_then(|number| pending.lock().expect("pending lock").remove(&number));
+                            let call = id.as_number().and_then(|number| {
+                                pending.lock().expect("pending lock").remove(&number)
+                            });
                             if let Some(call) = call {
                                 let _ = call.sender.send(payload);
                             }
@@ -369,10 +373,13 @@ impl KernelClient {
     ) -> Result<serde_json::Value, RuntimeError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = oneshot::channel();
-        self.pending
-            .lock()
-            .expect("pending lock")
-            .insert(id, PendingCall { sender, method: method.to_owned() });
+        self.pending.lock().expect("pending lock").insert(
+            id,
+            PendingCall {
+                sender,
+                method: method.to_owned(),
+            },
+        );
 
         self.send_line(protocol::request_frame(id, method, &params))?;
 
@@ -405,7 +412,11 @@ impl KernelClient {
     }
 
     /// Answer a kernel-initiated request. Forgetting this stalls the agent.
-    pub fn answer(&self, id: &protocol::FrameId, payload: ResponsePayload) -> Result<(), RuntimeError> {
+    pub fn answer(
+        &self,
+        id: &protocol::FrameId,
+        payload: ResponsePayload,
+    ) -> Result<(), RuntimeError> {
         self.send_line(protocol::response_frame(id, &payload))
     }
 
@@ -418,15 +429,27 @@ impl KernelClient {
         let value = serde_json::to_value(outcome).map_err(|error| {
             RuntimeError::Protocol(protocol::ProtocolError::Malformed(error.to_string()))
         })?;
-        self.answer(id, ResponsePayload::Ok(serde_json::json!({ "outcome": value })))
+        self.answer(
+            id,
+            ResponsePayload::Ok(serde_json::json!({ "outcome": value })),
+        )
     }
 
     /// Ask the kernel to shut down, then stop waiting for politeness.
     pub async fn shutdown(&self, grace: Duration) {
-        let _ = self.call(protocol::method::SHUTDOWN, serde_json::Value::Null, Some(grace)).await;
+        let _ = self
+            .call(
+                protocol::method::SHUTDOWN,
+                serde_json::Value::Null,
+                Some(grace),
+            )
+            .await;
         self.stop_requested
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        let _ = self.exited.send(ExitStatus { code: None, requested: true });
+        let _ = self.exited.send(ExitStatus {
+            code: None,
+            requested: true,
+        });
         self.terminate();
     }
 

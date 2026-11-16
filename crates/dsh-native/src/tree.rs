@@ -151,7 +151,11 @@ pub fn list(root: &Path, path: &Path, show_noisy: bool) -> Result<Listing, TreeE
 ///
 /// The cap is not about memory: a preview that streams 40 MB into a WebView locks the window,
 /// and the user wanted to glance at the top of a file.
-pub fn read_preview(root: &Path, path: &Path, max_bytes: u64) -> Result<crate::text::Decoded, TreeError> {
+pub fn read_preview(
+    root: &Path,
+    path: &Path,
+    max_bytes: u64,
+) -> Result<crate::text::Decoded, TreeError> {
     let root = normalize(root)?;
     let target = normalize(path)?;
     if !target.starts_with(&root) {
@@ -172,7 +176,11 @@ fn normalize(path: &Path) -> Result<PathBuf, TreeError> {
     // `canonicalize` also collapses `..`, which is what makes the containment check sound:
     // comparing unnormalised paths would let `a/../../etc` pass.
     let canonical = std::fs::canonicalize(path).map_err(TreeError::Io)?;
-    debug_assert!(!canonical.components().any(|part| matches!(part, Component::ParentDir)));
+    debug_assert!(
+        !canonical
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+    );
     Ok(canonical)
 }
 
@@ -196,7 +204,11 @@ mod tests {
         let listing = list(&root, &root, false).expect("list");
         let _ = std::fs::remove_dir_all(&root);
 
-        let names: Vec<&str> = listing.entries.iter().map(|entry| entry.name.as_str()).collect();
+        let names: Vec<&str> = listing
+            .entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
         assert_eq!(names, vec!["src", "README.md"]);
         assert!(!names.contains(&"node_modules"));
     }
@@ -206,7 +218,12 @@ mod tests {
         let root = scratch("noisy");
         let listing = list(&root, &root, true).expect("list");
         let _ = std::fs::remove_dir_all(&root);
-        assert!(listing.entries.iter().any(|entry| entry.name == "node_modules"));
+        assert!(
+            listing
+                .entries
+                .iter()
+                .any(|entry| entry.name == "node_modules")
+        );
     }
 
     #[test]
@@ -267,7 +284,11 @@ mod cap_tests {
 
         assert_eq!(listing.entries.len(), MAX_ENTRIES);
         assert!(listing.truncated);
-        assert_eq!(listing.total, MAX_ENTRIES + 25, "the real count is still reported");
+        assert_eq!(
+            listing.total,
+            MAX_ENTRIES + 25,
+            "the real count is still reported"
+        );
     }
 
     #[test]

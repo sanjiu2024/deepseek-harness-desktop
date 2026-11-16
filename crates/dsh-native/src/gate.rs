@@ -74,7 +74,10 @@ mod tests {
         let gate = Gate::new(2);
         let first = gate.try_enter().expect("first");
         let second = gate.try_enter().expect("second");
-        assert!(gate.try_enter().is_none(), "a third must be refused, not queued");
+        assert!(
+            gate.try_enter().is_none(),
+            "a third must be refused, not queued"
+        );
 
         drop(first);
         assert_eq!(gate.in_flight(), 1);

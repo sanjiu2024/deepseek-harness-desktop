@@ -88,11 +88,21 @@ impl std::fmt::Display for FrameId {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Incoming {
     /// A notification: no id, nothing to answer.
-    Notification { method: String, params: serde_json::Value },
+    Notification {
+        method: String,
+        params: serde_json::Value,
+    },
     /// A request from the kernel that must be answered, or the agent stalls.
-    Request { id: FrameId, method: String, params: serde_json::Value },
+    Request {
+        id: FrameId,
+        method: String,
+        params: serde_json::Value,
+    },
     /// A reply to one of our requests.
-    Response { id: FrameId, payload: ResponsePayload },
+    Response {
+        id: FrameId,
+        payload: ResponsePayload,
+    },
 }
 
 /// Body of a reply frame.
@@ -169,15 +179,16 @@ pub fn classify(value: serde_json::Value) -> Result<Incoming, ProtocolError> {
             let error = object.get("error");
             let payload = match error {
                 Some(error) => ResponsePayload::Err(RpcError {
-                    code: error.get("code").and_then(serde_json::Value::as_i64).unwrap_or(0),
+                    code: error
+                        .get("code")
+                        .and_then(serde_json::Value::as_i64)
+                        .unwrap_or(0),
                     message: error
                         .get("message")
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or("kernel returned an error with no message")
                         .to_owned(),
-                    data: error
-                        .get("data")
-                        .map(|data| data.to_string()),
+                    data: error.get("data").map(|data| data.to_string()),
                 }),
                 None => ResponsePayload::Ok(
                     object
@@ -281,7 +292,10 @@ mod tests {
             panic!("expected a response");
         };
         assert_eq!(id, FrameId::Number(3));
-        assert_eq!(payload, ResponsePayload::Ok(serde_json::json!({"serverInfo": {"name": "x"}})));
+        assert_eq!(
+            payload,
+            ResponsePayload::Ok(serde_json::json!({"serverInfo": {"name": "x"}}))
+        );
     }
 
     #[test]
@@ -307,7 +321,11 @@ mod tests {
 
     #[test]
     fn request_frame_round_trips_through_the_parser() {
-        let line = request_frame(42, method::SESSION_PROMPT, &serde_json::json!({"sessionId": "abc"}));
+        let line = request_frame(
+            42,
+            method::SESSION_PROMPT,
+            &serde_json::json!({"sessionId": "abc"}),
+        );
         let Incoming::Request { id, method, params } = parse_frame(&line).expect("parses") else {
             panic!("expected a request");
         };
@@ -368,13 +386,12 @@ mod wire_shape_tests {
         assert_eq!(value["kind"], "notification");
     }
 
-/// The kernel issues string ids for the requests it sends. Reading only
+    /// The kernel issues string ids for the requests it sends. Reading only
     /// numbers classified every approval as a notification, so no dialog appeared
     /// and the agent stayed blocked — the bug this test exists to prevent.
     #[test]
     fn a_request_with_a_string_id_is_a_request_not_a_notification() {
-        let frame =
-            r#"{"jsonrpc":"2.0","id":"req_9f3c","method":"approval/request","params":{"sessionId":"s","toolName":"pwsh"}}"#;
+        let frame = r#"{"jsonrpc":"2.0","id":"req_9f3c","method":"approval/request","params":{"sessionId":"s","toolName":"pwsh"}}"#;
         let Incoming::Request { id, method, .. } = parse_frame(frame).expect("parses") else {
             panic!("a frame with an id and a method must be a request");
         };

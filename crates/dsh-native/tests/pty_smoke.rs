@@ -19,8 +19,7 @@ fn a_shell_echoes_what_it_is_given() {
     .expect("spawn a shell");
     eprintln!("spawned");
 
-    pty.write("echo DSH-PTY-OK\r\n".as_bytes())
-        .expect("write");
+    pty.write("echo DSH-PTY-OK\r\n".as_bytes()).expect("write");
     eprintln!("wrote");
 
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -114,8 +113,14 @@ fn a_burst_of_output_is_coalesced() {
         }
     }
     pty.close();
-    assert!(ended, "never saw the end marker; {bytes} bytes in {events} events");
-    assert!(bytes > 20_000, "expected the burst to actually happen, got {bytes} bytes");
+    assert!(
+        ended,
+        "never saw the end marker; {bytes} bytes in {events} events"
+    );
+    assert!(
+        bytes > 20_000,
+        "expected the burst to actually happen, got {bytes} bytes"
+    );
     assert!(
         events < 200,
         "output should be coalesced, not one event per read: {events} events for {bytes} bytes",

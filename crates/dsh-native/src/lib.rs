@@ -10,7 +10,7 @@ pub mod pty;
 pub mod text;
 pub mod tree;
 
-pub use gate::{Gate, DEFAULT_PREVIEW_LIMIT};
+pub use gate::{DEFAULT_PREVIEW_LIMIT, Gate};
 pub use pty::{Pty, PtyEvent, PtySize};
-pub use text::{decode, Decoded};
+pub use text::{Decoded, decode};
 pub use tree::{Entry, EntryKind, TreeError};

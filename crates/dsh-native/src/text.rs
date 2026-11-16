@@ -95,7 +95,11 @@ fn utf16(rest: &[u8], little_endian: bool) -> Option<Decoded> {
     let text = String::from_utf16_lossy(&units);
     Some(Decoded {
         text,
-        encoding: if little_endian { "utf-16le" } else { "utf-16be" },
+        encoding: if little_endian {
+            "utf-16le"
+        } else {
+            "utf-16be"
+        },
         lossy: false,
     })
 }

@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use dsh_runtime::process::{kernel_entry, KernelClient, KernelConfig};
+use dsh_runtime::process::{KernelClient, KernelConfig, kernel_entry};
 use dsh_runtime::{KernelPool, Route};
 
 fn config(home: &std::path::Path, kernel_dir: &std::path::Path) -> Option<KernelConfig> {
@@ -63,12 +63,27 @@ async fn two_routes_get_two_kernels_and_one_route_is_reused() {
         }
     };
 
-    let a1 = pool.acquire(&route_a, spawn(template.clone())).await.expect("first kernel");
-    let a2 = pool.acquire(&route_a, spawn(template.clone())).await.expect("reuse");
-    assert!(std::sync::Arc::ptr_eq(&a1, &a2), "the same route must reuse its kernel");
+    let a1 = pool
+        .acquire(&route_a, spawn(template.clone()))
+        .await
+        .expect("first kernel");
+    let a2 = pool
+        .acquire(&route_a, spawn(template.clone()))
+        .await
+        .expect("reuse");
+    assert!(
+        std::sync::Arc::ptr_eq(&a1, &a2),
+        "the same route must reuse its kernel"
+    );
 
-    let b = pool.acquire(&route_b, spawn(template)).await.expect("second kernel");
-    assert!(!std::sync::Arc::ptr_eq(&a1, &b), "a different route needs its own process");
+    let b = pool
+        .acquire(&route_b, spawn(template))
+        .await
+        .expect("second kernel");
+    assert!(
+        !std::sync::Arc::ptr_eq(&a1, &b),
+        "a different route needs its own process"
+    );
     assert_eq!(pool.routes().await.len(), 2);
 
     pool.bind_session(&route_b, "session-on-b").await;
@@ -83,8 +98,8 @@ async fn two_routes_get_two_kernels_and_one_route_is_reused() {
 async fn a_dead_kernel_leaves_the_pool() {
     // A fake kernel that exits on its own: the point is that the pool notices, because a
     // route whose process is gone must not keep handing out a client whose stdin is closed.
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/exiting-kernel.mjs");
+    let fixture =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/exiting-kernel.mjs");
     let config = KernelConfig {
         node: "node".into(),
         entry: fixture,
@@ -122,7 +137,8 @@ async fn a_dead_kernel_leaves_the_pool() {
 fn idle_config() -> KernelConfig {
     KernelConfig {
         node: "node".into(),
-        entry: std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/idle-kernel.mjs"),
+        entry: std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/idle-kernel.mjs"),
         profile: "sdk".into(),
         patches: vec![],
         home: std::env::temp_dir(),
@@ -131,7 +147,9 @@ fn idle_config() -> KernelConfig {
     }
 }
 
-fn idle_spawn() -> impl FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<KernelClient, String>>>> {
+fn idle_spawn()
+-> impl FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<KernelClient, String>>>>
+{
     let config = idle_config();
     || {
         Box::pin(async move {
@@ -158,9 +176,19 @@ async fn the_oldest_idle_route_is_evicted_at_capacity() {
     let kept: Vec<String> = routes.iter().map(ToString::to_string).collect();
     pool.shutdown_all(Duration::from_secs(2)).await;
 
-    assert_eq!(kept.len(), 2, "capacity is a cap, not a suggestion: {kept:?}");
-    assert!(!kept.contains(&a.to_string()), "the oldest idle route went first: {kept:?}");
-    assert!(kept.contains(&c.to_string()), "the one just asked for stays");
+    assert_eq!(
+        kept.len(),
+        2,
+        "capacity is a cap, not a suggestion: {kept:?}"
+    );
+    assert!(
+        !kept.contains(&a.to_string()),
+        "the oldest idle route went first: {kept:?}"
+    );
+    assert!(
+        kept.contains(&c.to_string()),
+        "the one just asked for stays"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -179,7 +207,10 @@ async fn a_route_with_a_session_is_never_evicted() {
     pool.shutdown_all(Duration::from_secs(2)).await;
 
     assert_eq!(kept.len(), 2, "capacity was exceeded on purpose: {kept:?}");
-    assert!(kept.contains(&busy.to_string()), "a route with a session survives");
+    assert!(
+        kept.contains(&busy.to_string()),
+        "a route with a session survives"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

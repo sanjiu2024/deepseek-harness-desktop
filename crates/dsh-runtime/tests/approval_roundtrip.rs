@@ -33,7 +33,10 @@ async fn a_string_id_request_is_answered_with_the_same_id() {
     let mut frames = client.subscribe();
 
     client
-        .initialize(serde_json::json!({ "approvalRequests": true }), Duration::from_secs(10))
+        .initialize(
+            serde_json::json!({ "approvalRequests": true }),
+            Duration::from_secs(10),
+        )
         .await
         .expect("initialize");
 
@@ -41,7 +44,8 @@ async fn a_string_id_request_is_answered_with_the_same_id() {
     let mut answered = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     while tokio::time::Instant::now() < deadline {
-        let Ok(Ok(frame)) = tokio::time::timeout(Duration::from_secs(5), frames.recv()).await else {
+        let Ok(Ok(frame)) = tokio::time::timeout(Duration::from_secs(5), frames.recv()).await
+        else {
             break;
         };
         if let Incoming::Request { id, method, .. } = frame {
@@ -54,7 +58,10 @@ async fn a_string_id_request_is_answered_with_the_same_id() {
         }
     }
 
-    assert!(answered, "the fake kernel's request never reached the client");
+    assert!(
+        answered,
+        "the fake kernel's request never reached the client"
+    );
 
     client.shutdown(Duration::from_secs(2)).await;
 
@@ -75,5 +82,8 @@ fn response_frame_keeps_a_numeric_id_bare() {
         &ResponsePayload::Ok(serde_json::json!({ "ok": true })),
     );
     assert!(line.contains("\"id\":9"), "line was {line}");
-    assert!(!line.contains("\"id\":\"9\""), "numeric ids stay numeric: {line}");
+    assert!(
+        !line.contains("\"id\":\"9\""),
+        "numeric ids stay numeric: {line}"
+    );
 }

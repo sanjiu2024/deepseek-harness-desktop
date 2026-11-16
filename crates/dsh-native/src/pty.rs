@@ -154,9 +154,9 @@ impl Pty {
     /// consumes it is a bug worth surfacing, not something to absorb silently by growing a
     /// buffer until the process runs out of memory.
     pub fn write(&self, data: &[u8]) -> Result<(), String> {
-        self.outbound
-            .try_send(data.to_vec())
-            .map_err(|_| "the terminal is not keeping up with input; drop some keystrokes".to_owned())
+        self.outbound.try_send(data.to_vec()).map_err(|_| {
+            "the terminal is not keeping up with input; drop some keystrokes".to_owned()
+        })
     }
 
     /// Tell the shell the window changed size, so full-screen tools redraw correctly.
@@ -237,4 +237,3 @@ fn which(name: &str) -> Option<String> {
     }
     None
 }
-

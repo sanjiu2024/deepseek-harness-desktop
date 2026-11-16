@@ -88,10 +88,15 @@ mod tests {
         let mut lines = raw.lines();
         let header: crate::SessionHeader =
             serde_json::from_str(lines.next().expect("header")).expect("header json");
-        let events = lines
+        let events: Vec<crate::SessionEvent> = lines
             .map(|line| serde_json::from_str(line).expect("event json"))
             .collect();
-        SessionHistory { header, events }
+        SessionHistory {
+            total: events.len(),
+            truncated: false,
+            header,
+            events,
+        }
     }
 
     #[test]

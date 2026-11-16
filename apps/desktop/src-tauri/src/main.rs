@@ -2,8 +2,8 @@
 //! everything with behaviour lives in `crates/`. See AGENTS.md, "Where code goes".
 
 mod commands;
-mod workspace;
 mod state;
+mod workspace;
 
 use std::process::ExitCode;
 
@@ -41,11 +41,18 @@ fn init_tracing() {
     let file_layer = match std::fs::create_dir_all(&dir) {
         Ok(()) => {
             let appender = tracing_appender::rolling::daily(&dir, "desktop.log");
-            Some(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(appender))
+            Some(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(appender),
+            )
         }
         // An unwritable log directory must not stop the app from starting.
         Err(error) => {
-            eprintln!("cannot create {}: {error} — logging to stderr only", dir.display());
+            eprintln!(
+                "cannot create {}: {error} — logging to stderr only",
+                dir.display()
+            );
             None
         }
     };
@@ -55,7 +62,6 @@ fn init_tracing() {
         .with(tracing_subscriber::fmt::layer())
         .with(file_layer)
         .init();
-
 }
 
 /**
@@ -178,7 +184,10 @@ fn main() -> ExitCode {
                     // Every kernel in the pool, not just the visible one: a leftover process
                     // holds the session lock and the next launch calls it a corrupt store.
                     tauri::async_runtime::block_on(async {
-                        state.pool.shutdown_all(std::time::Duration::from_secs(3)).await;
+                        state
+                            .pool
+                            .shutdown_all(std::time::Duration::from_secs(3))
+                            .await;
                     });
                 }
             });

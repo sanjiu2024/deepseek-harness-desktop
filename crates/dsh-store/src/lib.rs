@@ -27,6 +27,13 @@ pub use export::render_markdown;
 pub use fsutil::write_atomic;
 pub use titles::SessionTitles;
 
+/// How many of a session's events are loaded at once.
+///
+/// A conversation that reached this length is not one a reader scrolls from the top. Combined
+/// with `truncated`, the client can say "只显示最近 2000 条" instead of freezing while it
+/// materialises a year of history.
+pub const EVENT_WINDOW: usize = 2000;
+
 /// The session format generation this build understands.
 pub const CURRENT_FORMAT_VERSION: u32 = 4;
 
@@ -93,7 +100,12 @@ pub struct SessionSummary {
 #[serde(rename_all = "camelCase")]
 pub struct SessionHistory {
     pub header: SessionHeader,
+    /// The events to render, newest kept when the session is longer than the window.
     pub events: Vec<SessionEvent>,
+    /// How many readable events the file has in total.
+    pub total: usize,
+    /// True when `events` is only the tail; the beginning was not loaded.
+    pub truncated: bool,
 }
 
 /// One match inside a session.
@@ -181,9 +193,14 @@ impl SessionStore {
     pub fn load(&self, id: &str) -> Result<SessionHistory, StoreError> {
         let mut fallback: Option<StoreError> = None;
         for path in self.logs()? {
-            match read_session(&path) {
-                Ok((header, events)) if header.id == id => {
-                    return Ok(SessionHistory { header, events });
+            match read_session_windowed(&path, EVENT_WINDOW) {
+                Ok((header, events, total, truncated)) if header.id == id => {
+                    return Ok(SessionHistory {
+                        header,
+                        events,
+                        total,
+                        truncated,
+                    });
                 }
                 Ok(_) => {}
                 Err(error) => fallback = fallback.or(Some(error)),
@@ -199,61 +216,61 @@ impl SessionStore {
     /// back, and it would go stale the moment a session is deleted. If this ever gets slow, the
     /// fix is an index **built from** these logs, not a different source of truth.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, StoreError> {
-      let needle = query.trim().to_lowercase();
-      if needle.is_empty() {
-        return Ok(Vec::new());
-      }
-      let titles = SessionTitles::load(self.home());
-      let mut hits = Vec::new();
-
-      for path in self.logs()? {
-        // Stop the whole scan once the limit is met: continuing to open and parse the remaining
-        // transcripts cannot change the answer, and the caller asked for a page, not for every
-        // match in the archive.
-        if hits.len() >= limit {
-          break;
+        let needle = query.trim().to_lowercase();
+        if needle.is_empty() {
+            return Ok(Vec::new());
         }
-        let Ok((header, events)) = read_session(&path) else {
-          continue;
-        };
-        let title = titles
-          .get(&header.id)
-          .map(str::to_owned)
-          .unwrap_or_else(|| summarize(&header, &events).title);
+        let titles = SessionTitles::load(self.home());
+        let mut hits = Vec::new();
 
-        for event in &events {
-          if hits.len() >= limit {
-            break;
-          }
-          let text = match event.kind.as_str() {
-            // The user's own words and the model's answer. Tool traffic is machine text:
-            // matching it would surface a session because a path happens to contain the term.
-            "user/message" => content_text(&event.data),
-            "assistant/message" => event
-              .data
-              .get("message")
-              .and_then(content_text)
-              .or_else(|| content_text(&event.data)),
-            _ => None,
-          };
-          let Some(text) = text else {
-            continue;
-          };
-          if let Some(snippet) = snippet_around(&text, &needle) {
-            hits.push(SearchHit {
-              session_id: header.id.clone(),
-              title: title.clone(),
-              seq: event.seq,
-              time: event.time,
-              snippet,
-            });
-          }
+        for path in self.logs()? {
+            // Stop the whole scan once the limit is met: continuing to open and parse the remaining
+            // transcripts cannot change the answer, and the caller asked for a page, not for every
+            // match in the archive.
+            if hits.len() >= limit {
+                break;
+            }
+            let Ok((header, events)) = read_session(&path) else {
+                continue;
+            };
+            let title = titles
+                .get(&header.id)
+                .map(str::to_owned)
+                .unwrap_or_else(|| summarize(&header, &events).title);
+
+            for event in &events {
+                if hits.len() >= limit {
+                    break;
+                }
+                let text = match event.kind.as_str() {
+                    // The user's own words and the model's answer. Tool traffic is machine text:
+                    // matching it would surface a session because a path happens to contain the term.
+                    "user/message" => content_text(&event.data),
+                    "assistant/message" => event
+                        .data
+                        .get("message")
+                        .and_then(content_text)
+                        .or_else(|| content_text(&event.data)),
+                    _ => None,
+                };
+                let Some(text) = text else {
+                    continue;
+                };
+                if let Some(snippet) = snippet_around(&text, &needle) {
+                    hits.push(SearchHit {
+                        session_id: header.id.clone(),
+                        title: title.clone(),
+                        seq: event.seq,
+                        time: event.time,
+                        snippet,
+                    });
+                }
+            }
         }
-      }
 
-      hits.sort_by_key(|hit| std::cmp::Reverse(hit.time));
-      // (the hit limit is enforced above; this comment marks where the scan stops)
-      Ok(hits)
+        hits.sort_by_key(|hit| std::cmp::Reverse(hit.time));
+        // (the hit limit is enforced above; this comment marks where the scan stops)
+        Ok(hits)
     }
 
     /// Does a session with this id exist on disk?
@@ -467,13 +484,41 @@ fn read_header(path: &Path) -> Result<SessionHeader, StoreError> {
 }
 
 fn read_session(path: &Path) -> Result<(SessionHeader, Vec<SessionEvent>), StoreError> {
-    let raw = std::fs::read_to_string(path)?;
-    let mut lines = raw.lines().filter(|line| !line.trim().is_empty());
+    let (header, events, _, _) = read_session_windowed(path, usize::MAX)?;
+    Ok((header, events))
+}
 
-    let first = lines
-        .next()
-        .ok_or_else(|| StoreError::MissingHeader(path.display().to_string()))?;
-    let header: SessionHeader = serde_json::from_str(first)?;
+/// Read a session, keeping at most `window` events — the newest ones.
+///
+/// Two reasons this is not `read_to_string` plus a full parse:
+///
+/// 1. **Memory.** A long session reaches tens of megabytes; the parsed `Vec<SessionEvent>` is
+///    several times larger than the file, and the whole thing then has to be serialised again
+///    to cross to the UI. Peak memory grew with session length, and the window froze while it
+///    happened.
+/// 2. **Relevance.** A conversation's opening is not what a reader needs when they reopen it
+///    after a hundred turns — the tail is. So the window keeps the newest events and reports
+///    how many were left out, rather than pretending the session started mid-sentence.
+fn read_session_windowed(
+    path: &Path,
+    window: usize,
+) -> Result<(SessionHeader, Vec<SessionEvent>, usize, bool), StoreError> {
+    use std::io::BufRead;
+
+    let file = std::fs::File::open(path)?;
+    let mut lines = std::io::BufReader::new(file).lines();
+
+    let header: SessionHeader = loop {
+        match lines.next() {
+            Some(Ok(line)) if !line.trim().is_empty() => {
+                break serde_json::from_str(&line)?;
+            }
+            Some(Ok(_)) => continue,
+            Some(Err(error)) => return Err(StoreError::Io(error)),
+            None => return Err(StoreError::MissingHeader(path.display().to_string())),
+        }
+    };
+
     if header.version != CURRENT_FORMAT_VERSION {
         return Err(StoreError::UnsupportedFormat {
             version: header.version,
@@ -481,17 +526,35 @@ fn read_session(path: &Path) -> Result<(SessionHeader, Vec<SessionEvent>), Store
         });
     }
 
-    let mut events = Vec::new();
+    let keep = window.max(1);
+    let mut kept: std::collections::VecDeque<SessionEvent> =
+        std::collections::VecDeque::with_capacity(keep.min(4096));
+    let mut total = 0usize;
+
     for line in lines {
-        // A torn final line is normal after a crash; everything before it counts.
-        match serde_json::from_str::<SessionEvent>(line) {
-            Ok(event) => events.push(event),
+        let Ok(line) = line else {
+            // A torn final line is normal after a crash; everything before it counts.
+            break;
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<SessionEvent>(&line) {
+            Ok(event) => {
+                total += 1;
+                if kept.len() == keep {
+                    kept.pop_front();
+                }
+                kept.push_back(event);
+            }
             Err(error) => {
                 tracing::debug!(target: "dsh_store", %error, "skipping a malformed event row");
             }
         }
     }
-    Ok((header, events))
+
+    let truncated = total > kept.len();
+    Ok((header, kept.into(), total, truncated))
 }
 
 /// A summary is built without parsing the transcript.
@@ -551,9 +614,7 @@ fn summarize_cheap(header: &SessionHeader, path: &Path) -> SessionSummary {
         updated_at = updated_at.max(event.time);
     }
 
-    let title = title
-        .or(first_user)
-        .unwrap_or_else(|| header.id.clone());
+    let title = title.or(first_user).unwrap_or_else(|| header.id.clone());
 
     SessionSummary {
         id: header.id.clone(),
@@ -919,10 +980,16 @@ mod search_tests {
             ],
         );
 
-        let hits = SessionStore::new(&root).search("tauri", 10).expect("search");
+        let hits = SessionStore::new(&root)
+            .search("tauri", 10)
+            .expect("search");
         let _ = std::fs::remove_dir_all(&root);
 
-        assert_eq!(hits.len(), 2, "both sides of the conversation are searchable");
+        assert_eq!(
+            hits.len(),
+            2,
+            "both sides of the conversation are searchable"
+        );
         assert!(hits.iter().all(|hit| hit.session_id == "a"));
     }
 
@@ -939,7 +1006,9 @@ mod search_tests {
             ],
         );
 
-        let hits = SessionStore::new(&root).search("tauri", 10).expect("search");
+        let hits = SessionStore::new(&root)
+            .search("tauri", 10)
+            .expect("search");
         let _ = std::fs::remove_dir_all(&root);
         assert!(hits.is_empty());
     }
@@ -959,12 +1028,17 @@ mod search_tests {
             ],
         );
 
-        let hits = SessionStore::new(&root).search("关键字", 10).expect("search");
+        let hits = SessionStore::new(&root)
+            .search("关键字", 10)
+            .expect("search");
         let _ = std::fs::remove_dir_all(&root);
 
         let snippet = &hits[0].snippet;
         assert!(snippet.contains("关键字"));
-        assert!(!snippet.contains('\u{fffd}'), "no replacement characters: {snippet}");
+        assert!(
+            !snippet.contains('\u{fffd}'),
+            "no replacement characters: {snippet}"
+        );
         assert!(snippet.starts_with('…') && snippet.ends_with('…'));
     }
 
@@ -1092,7 +1166,9 @@ mod search_limit_tests {
             write_session(&root, &format!("s{index}"));
         }
 
-        let hits = SessionStore::new(&root).search("needle", 2).expect("search");
+        let hits = SessionStore::new(&root)
+            .search("needle", 2)
+            .expect("search");
         let _ = std::fs::remove_dir_all(&root);
 
         assert_eq!(hits.len(), 2);
@@ -1104,7 +1180,8 @@ mod trash_listing_tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("dsh-trashlist-{name}-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("dsh-trashlist-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).ok();
         root
@@ -1134,8 +1211,15 @@ mod trash_listing_tests {
 
         assert_eq!(trash.len(), 1);
         assert_eq!(trash[0].id, "a");
-        assert!(trash[0].bytes > 2048, "the whole directory counts: {}", trash[0].bytes);
-        assert!(trash[0].deleted_at > 0, "the timestamp survives the round trip");
+        assert!(
+            trash[0].bytes > 2048,
+            "the whole directory counts: {}",
+            trash[0].bytes
+        );
+        assert!(
+            trash[0].deleted_at > 0,
+            "the timestamp survives the round trip"
+        );
     }
 
     #[test]
@@ -1153,7 +1237,11 @@ mod trash_listing_tests {
 
         assert_eq!(removed, 1);
         assert!(trash.is_empty());
-        assert_eq!(listed.len(), 1, "the session that was not deleted is untouched");
+        assert_eq!(
+            listed.len(),
+            1,
+            "the session that was not deleted is untouched"
+        );
         assert_eq!(listed[0].id, "keep");
     }
 
@@ -1166,5 +1254,69 @@ mod trash_listing_tests {
         let _ = std::fs::remove_dir_all(&root);
         assert!(trash.is_empty());
         assert_eq!(removed, 0);
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("dsh-window-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).ok();
+        root
+    }
+
+    fn write_long_session(root: &Path, id: &str, events: usize) {
+        let dir = root.join(SESSIONS_DIR).join("--p--").join(id);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let mut body = format!(
+            r#"{{"type":"session","version":4,"id":"{id}","createdAt":1,"isSeeded":false,"delegationDepth":0}}"#
+        );
+        for index in 0..events {
+            body.push_str(&format!(
+                "\n{{\"type\":\"user/message\",\"seq\":{index},\"time\":{},\"data\":{{\"content\":[{{\"type\":\"text\",\"text\":\"m{index}\"}}]}}}}",
+                1000 + index
+            ));
+        }
+        std::fs::write(dir.join("session.v4.jsonl"), body).expect("write");
+    }
+
+    #[test]
+    fn a_long_session_loads_its_tail_and_says_it_is_truncated() {
+        // Opening a hundred-turn conversation must not mean materialising all of it: the
+        // reader wants the tail, and the beginning is what they scroll back for *later*.
+        let root = scratch("long");
+        write_long_session(&root, "a", EVENT_WINDOW + 300);
+
+        let history = SessionStore::new(&root).load("a").expect("load");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(history.events.len(), EVENT_WINDOW);
+        assert!(history.truncated);
+        assert_eq!(history.total, EVENT_WINDOW + 300);
+        assert_eq!(
+            history.events[0].seq, 300,
+            "the oldest kept event is the one after the cut"
+        );
+        assert_eq!(
+            history.events.last().map(|event| event.seq),
+            Some((EVENT_WINDOW + 299) as i64),
+            "the newest event is always present"
+        );
+    }
+
+    #[test]
+    fn a_short_session_is_complete_and_not_truncated() {
+        let root = scratch("short");
+        write_long_session(&root, "a", 5);
+
+        let history = SessionStore::new(&root).load("a").expect("load");
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(history.events.len(), 5);
+        assert!(!history.truncated);
+        assert_eq!(history.total, 5);
     }
 }

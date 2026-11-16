@@ -153,7 +153,12 @@ async fn live_bridge_frames_reach_the_event_stream() {
             continue;
         }
         if params["chunk"]["type"] == "text-delta" {
-            deltas.push(params["chunk"]["text"].as_str().unwrap_or_default().to_owned());
+            deltas.push(
+                params["chunk"]["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            );
         }
     }
 

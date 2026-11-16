@@ -16,9 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here on purpose: package.json's `packageManager` is the single source
+      # of truth, and action-setup errors outright when both are given.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 12
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -56,9 +56,9 @@ jobs:
     needs: rust
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here on purpose: package.json's `packageManager` is the single source
+      # of truth, and action-setup errors outright when both are given.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 12
       - uses: actions/setup-node@v4
         with:
           node-version: 24

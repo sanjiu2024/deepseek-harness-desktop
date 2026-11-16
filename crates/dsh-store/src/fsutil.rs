@@ -75,7 +75,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
 
         assert_eq!(body, r#"{"a":1}"#);
-        assert_eq!(leftovers, 0, "a stray .tmp is litter that gets mistaken for a file");
+        assert_eq!(
+            leftovers, 0,
+            "a stray .tmp is litter that gets mistaken for a file"
+        );
     }
 
     #[test]

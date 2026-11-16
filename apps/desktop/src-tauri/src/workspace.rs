@@ -62,25 +62,27 @@ pub fn pty_open(
     let cwd = state.workspace.clone();
     let label = id.clone();
     let handle = app.clone();
-    let pty = Pty::spawn(
-        &cwd,
-        PtySize { rows, cols },
-        move |event| match event {
-            PtyEvent::Data(bytes) => {
-                let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-                let _ = handle.emit(PTY_DATA_EVENT, DataPayload {
+    let pty = Pty::spawn(&cwd, PtySize { rows, cols }, move |event| match event {
+        PtyEvent::Data(bytes) => {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+            let _ = handle.emit(
+                PTY_DATA_EVENT,
+                DataPayload {
                     id: label.clone(),
                     data: encoded,
-                });
-            }
-            PtyEvent::Exited(code) => {
-                let _ = handle.emit(PTY_EXIT_EVENT, ExitPayload {
+                },
+            );
+        }
+        PtyEvent::Exited(code) => {
+            let _ = handle.emit(
+                PTY_EXIT_EVENT,
+                ExitPayload {
                     id: label.clone(),
                     code,
-                });
-            }
-        },
-    )?;
+                },
+            );
+        }
+    })?;
 
     {
         let mut shells = terminals.shells.lock().expect("terminals lock");
@@ -130,11 +132,7 @@ pub fn pty_resize(
 
 #[tauri::command]
 pub fn pty_close(terminals: State<'_, Terminals>, id: String) -> Result<(), String> {
-    let pty = terminals
-        .shells
-        .lock()
-        .expect("terminals lock")
-        .remove(&id);
+    let pty = terminals.shells.lock().expect("terminals lock").remove(&id);
     if let Some(pty) = pty {
         pty.close();
     }
@@ -179,9 +177,10 @@ pub fn fs_read(
 ) -> Result<dsh_native::Decoded, String> {
     // A permit, not a queue: a preview from ten clicks ago is no longer wanted, so the call
     // that arrives when the gate is full is refused with a reason instead of waiting.
-    let _permit = previews.0.try_enter().ok_or_else(|| {
-        "已经有 3 个文件在读，等一个读完再点".to_owned()
-    })?;
+    let _permit = previews
+        .0
+        .try_enter()
+        .ok_or_else(|| "已经有 3 个文件在读，等一个读完再点".to_owned())?;
     tree::read_preview(
         &state.workspace,
         std::path::Path::new(&path),

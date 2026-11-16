@@ -65,7 +65,8 @@ fn read_overlay(path: &Path) -> BTreeMap<String, String> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|raw| {
-            serde_json::from_str::<BTreeMap<String, String>>(raw.trim_start_matches('\u{feff}')).ok()
+            serde_json::from_str::<BTreeMap<String, String>>(raw.trim_start_matches('\u{feff}'))
+                .ok()
         })
         .unwrap_or_default()
 }

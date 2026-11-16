@@ -229,7 +229,10 @@ mod tests {
 
     #[test]
     fn display_is_what_the_header_shows() {
-        assert_eq!(route("deepseek-v4.1-flash").to_string(), "opencode-go/deepseek-v4.1-flash");
+        assert_eq!(
+            route("deepseek-v4.1-flash").to_string(),
+            "opencode-go/deepseek-v4.1-flash"
+        );
     }
 
     // The pool's mutation paths need real clients, which need a kernel; they are exercised

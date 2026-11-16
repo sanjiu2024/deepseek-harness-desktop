@@ -79,7 +79,10 @@ pub struct KernelStarted {
 /// spawning a second one. Different routes get different processes — a kernel pins its
 /// model at `initialize`, so "switch model" can only mean "run another kernel".
 #[tauri::command]
-pub async fn kernel_start(app: AppHandle, state: State<'_, AppState>) -> Result<KernelStarted, String> {
+pub async fn kernel_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<KernelStarted, String> {
     let route = state.current_route();
     let _client = acquire(&app, &state, &route).await?;
     Ok(KernelStarted {
@@ -120,7 +123,13 @@ async fn acquire(
                 KernelClient::spawn(KernelConfig {
                     node: std::env::var_os("DSH_NODE")
                         .map(Into::into)
-                        .or_else(|| crate::state::alongside_exe(if cfg!(windows) { "node.exe" } else { "node" }))
+                        .or_else(|| {
+                            crate::state::alongside_exe(if cfg!(windows) {
+                                "node.exe"
+                            } else {
+                                "node"
+                            })
+                        })
                         .unwrap_or_else(|| "node".into()),
                     entry,
                     profile: "sdk".to_owned(),
@@ -172,9 +181,7 @@ pub async fn kernel_initialize(
         params["reasoningEffort"] = serde_json::Value::String(effort);
     }
 
-    let result = client
-        .initialize(params, Duration::from_secs(30))
-        .await;
+    let result = client.initialize(params, Duration::from_secs(30)).await;
     match &result {
         Ok(value) => tracing::debug!(target: "dsh_desktop_app", ?value, "kernel_initialize ok"),
         Err(error) => tracing::warn!(target: "dsh_desktop_app", %error, "kernel_initialize failed"),
@@ -263,9 +270,9 @@ fn patch_path() -> std::path::PathBuf {
     if let Some(custom) = std::env::var_os("DSH_DESKTOP_PATCH") {
         return custom.into();
     }
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../profiles/sdk/cordis.patch.yml")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../profiles/sdk/cordis.patch.yml")
 }
-
 
 fn forward_frames(app: &AppHandle, client: &KernelClient) {
     let mut frames = client.subscribe();
@@ -301,7 +308,9 @@ fn emit(app: &AppHandle, frame: Incoming) {
             trace_frame(app, &value);
             let _ = app.emit(KERNEL_EVENT, value);
         }
-        Err(error) => tracing::warn!(target: "dsh_desktop_app", %error, "dropped an unserialisable frame"),
+        Err(error) => {
+            tracing::warn!(target: "dsh_desktop_app", %error, "dropped an unserialisable frame")
+        }
     }
 }
 
@@ -318,7 +327,11 @@ fn trace_answer(app: &AppHandle, id: &dsh_runtime::FrameId, result: &serde_json:
         .and_then(serde_json::Value::as_str)
         .unwrap_or("-");
     let line = format!("answer\t{id}\t{outcome}\n");
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         use std::io::Write;
         let _ = file.write_all(line.as_bytes());
     }
@@ -336,10 +349,20 @@ fn trace_frame(app: &AppHandle, value: &serde_json::Value) {
     }
     let state = app.state::<AppState>();
     let path = state.dsh_home.join("frames.log");
-    let kind = value.get("kind").and_then(serde_json::Value::as_str).unwrap_or("?");
-    let method = value.get("method").and_then(serde_json::Value::as_str).unwrap_or("-");
+    let kind = value
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("?");
+    let method = value
+        .get("method")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("-");
     let line = format!("{kind}\t{method}\n");
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         use std::io::Write;
         let _ = file.write_all(line.as_bytes());
     }
@@ -390,7 +413,9 @@ pub fn settings_remember_session(
     id: Option<String>,
 ) -> Result<(), String> {
     let mut settings = Settings::load(&state.dsh_home);
-    settings.last_session_id = id.map(|value| value.trim().to_owned()).filter(|value| !value.is_empty());
+    settings.last_session_id = id
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
     settings.save(&state.dsh_home)
 }
 
@@ -430,7 +455,10 @@ pub fn settings_set_secret(
 ) -> Result<SettingsSnapshot, String> {
     let name = name.trim().to_owned();
     let value = value.trim().to_owned();
-    if !name.chars().all(|character| character.is_ascii_uppercase() || character == '_') {
+    if !name
+        .chars()
+        .all(|character| character.is_ascii_uppercase() || character == '_')
+    {
         return Err(format!("not an environment variable name: {name}"));
     }
     if value.is_empty() {
@@ -483,7 +511,9 @@ fn credential_present() -> bool {
 pub fn session_list(state: State<'_, AppState>) -> Result<Vec<dsh_store::SessionSummary>, String> {
     let listed = dsh_store::SessionStore::new(&state.dsh_home).list();
     match &listed {
-        Ok(sessions) => tracing::debug!(target: "dsh_desktop_app", count = sessions.len(), "session_list"),
+        Ok(sessions) => {
+            tracing::debug!(target: "dsh_desktop_app", count = sessions.len(), "session_list")
+        }
         Err(error) => tracing::warn!(target: "dsh_desktop_app", %error, "session_list failed"),
     }
     listed.map_err(|error| error.to_string())

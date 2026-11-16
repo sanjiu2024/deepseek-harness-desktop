@@ -28,7 +28,12 @@ fn identifier() -> String {
     const CONFIG: &str = include_str!("../tauri.conf.json");
     serde_json::from_str::<serde_json::Value>(CONFIG)
         .ok()
-        .and_then(|config| config.get("identifier").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .and_then(|config| {
+            config
+                .get("identifier")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
         .unwrap_or_else(|| "com.dsh.desktop".to_owned())
 }
 
@@ -317,7 +322,6 @@ impl AppState {
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod tests {
