@@ -199,3 +199,61 @@ fn a_large_paste_does_not_block_the_caller() {
         "queuing {accepted} chunks took {elapsed:?} — writes are blocking again",
     );
 }
+
+/// A **diagnostic**, not an assertion.
+///
+/// The two data-path tests are Windows-only because the CI runner received zero bytes from the
+/// shell and this machine has no Linux to debug it on. Guessing at the cause from a count of
+/// zero is not debugging, so this test asks the runner to describe what actually happened:
+/// bytes received, whether the child exited, its code, and the tail of any output.
+///
+/// It never fails. Its job is to put the answer in the CI log so the fix can be a fix rather
+/// than a theory.
+#[cfg(not(windows))]
+#[test]
+fn reports_what_the_unix_pty_does() {
+    let (sender, receiver) = mpsc::channel();
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "<unset>".to_owned());
+
+    let pty = match Pty::spawn(&std::env::temp_dir(), PtySize::default(), move |event| {
+        let _ = sender.send(event);
+    }) {
+        Ok(pty) => pty,
+        Err(error) => {
+            println!("[diag] spawn failed: {error} (SHELL={shell})");
+            return;
+        }
+    };
+
+    if let Err(error) = pty.write(b"echo DSH-DIAG\n") {
+        println!("[diag] write failed: {error}");
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut bytes = 0usize;
+    let mut events = 0usize;
+    let mut exited: Option<Option<u32>> = None;
+    let mut tail: Vec<u8> = Vec::new();
+    while Instant::now() < deadline {
+        match receiver.recv_timeout(Duration::from_millis(200)) {
+            Ok(PtyEvent::Data(chunk)) => {
+                events += 1;
+                bytes += chunk.len();
+                tail.extend_from_slice(&chunk);
+                if tail.len() > 1024 {
+                    let drop = tail.len() - 1024;
+                    tail.drain(..drop);
+                }
+            }
+            Ok(PtyEvent::Exited(code)) => {
+                exited = Some(code);
+                break;
+            }
+            Err(_) => {}
+        }
+    }
+    pty.close();
+
+    println!("[diag] SHELL={shell} events={events} bytes={bytes} exited={exited:?}");
+    println!("[diag] tail={:?}", String::from_utf8_lossy(&tail));
+}
