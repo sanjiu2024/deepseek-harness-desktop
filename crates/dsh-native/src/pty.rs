@@ -68,7 +68,12 @@ impl Pty {
             .slave
             .spawn_command(command)
             .map_err(|error| error.to_string())?;
-        drop(pair.slave);
+
+        // The slave is kept until the reader and writer are attached.
+        //
+        // Dropping it first is what portable-pty's examples do, and on Windows it is harmless.
+        // On Linux the CI diagnostic showed exactly zero bytes *and* no exit — a reader blocked
+        // on a master whose slave had already been closed on our side before the child held it.
 
         let mut reader = pair
             .master
@@ -97,6 +102,9 @@ impl Pty {
                 }
             }
         });
+
+        // Only now: the child has the slave, our copies of the handles exist.
+        drop(pair.slave);
 
         let closed = Arc::new(AtomicBool::new(false));
         let reader_closed = Arc::clone(&closed);
