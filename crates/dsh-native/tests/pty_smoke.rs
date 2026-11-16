@@ -9,6 +9,27 @@ use std::time::{Duration, Instant};
 
 use dsh_native::pty::{Pty, PtyEvent, PtySize};
 
+/// The line ending the shell in front of us expects.
+///
+/// Windows gets PowerShell (`\r\n`), everything else gets `sh` (`\n`). Sending the wrong one
+/// is not a rounding error: `\r` becomes part of the last word on unix, and the command is
+/// not what the test thinks it sent.
+fn enter() -> &'static str {
+    if cfg!(windows) { "\r\n" } else { "\n" }
+}
+
+/// A command that prints `marker`, in whichever shell we are running under.
+///
+/// The PTY layer is platform-neutral; the *tests* were not — they hard-coded PowerShell and
+/// failed the moment CI ran them on Linux.
+fn echo_command(text: &str) -> String {
+    if cfg!(windows) {
+        format!("Write-Output '{text}'")
+    } else {
+        format!("echo '{text}'")
+    }
+}
+
 #[test]
 fn a_shell_echoes_what_it_is_given() {
     eprintln!("spawning");
@@ -75,10 +96,18 @@ fn a_burst_of_output_is_coalesced() {
     // The marker is assembled by the shell rather than typed literally: the terminal echoes
     // what we write, so a literal marker is "seen" in the echo before any output arrives —
     // which is exactly how this test failed the first time (531 bytes, marker found).
-    pty.write(
-        b"$line = 'x' * 60; 1..500 | ForEach-Object { $line }; Write-Output ('DSH' + '-BURST' + '-END')\r\n",
-    )
-    .expect("write");
+    // The marker is assembled rather than typed: the terminal echoes what we write, so a
+    // literal marker would be "seen" in the echo before any output arrives.
+    let burst = if cfg!(windows) {
+        "$line = 'x' * 60; 1..500 | ForEach-Object { $line }; Write-Output ('DSH' + '-BURST' + '-END')"
+            .to_owned()
+    } else {
+        format!(
+            "i=0; while [ $i -lt 500 ]; do printf '%060d\\n' 0; i=$((i+1)); done; echo 'DSH'-'BURST'-'END'"
+        )
+    };
+    pty.write(format!("{burst}{}", enter()).as_bytes())
+        .expect("write");
 
     let deadline = Instant::now() + Duration::from_secs(40);
     let mut events = 0usize;
