@@ -52,18 +52,67 @@ struct Slot {
     sessions: Vec<String>,
 }
 
+/// How often one route may be restarted before the pool stops trying.
+///
+/// A kernel that dies on start-up dies again immediately: without a ceiling the client would
+/// respawn it on every message and the log would fill with identical crashes. The window makes
+/// "crashed five times in two minutes" a diagnosis instead of a loop.
+#[derive(Debug, Clone, Copy)]
+pub struct RestartPolicy {
+    /// Restarts allowed inside [`RestartPolicy::window`].
+    pub max_restarts: usize,
+    pub window: Duration,
+    /// First retry delay; doubles per attempt, capped at [`RestartPolicy::max_delay`].
+    pub base_delay: Duration,
+    pub max_delay: Duration,
+}
+
+impl Default for RestartPolicy {
+    fn default() -> Self {
+        Self {
+            max_restarts: 5,
+            window: Duration::from_secs(120),
+            base_delay: Duration::from_millis(500),
+            max_delay: Duration::from_secs(8),
+        }
+    }
+}
+
+/// Why a restart was refused.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RestartError {
+    #[error(
+        "the kernel for {route} crashed {attempts} times in {window:?}; giving up until the cause is fixed"
+    )]
+    GivingUp {
+        route: String,
+        attempts: usize,
+        window: Duration,
+    },
+}
+
 /// Kernels by route, started lazily.
 #[derive(Clone)]
 pub struct KernelPool {
     /// How many idle kernels to keep. A running session counts as in use.
     capacity: usize,
     slots: Arc<Mutex<HashMap<Route, Slot>>>,
+    /// Recent restart attempts, per route. Pruned to the policy's window on each check.
+    restarts: Arc<Mutex<HashMap<Route, Vec<Instant>>>>,
+    policy: RestartPolicy,
 }
 
 impl KernelPool {
     pub fn new(capacity: usize) -> Self {
+        Self::with_policy(capacity, RestartPolicy::default())
+    }
+
+    /// The same pool with an explicit restart policy — tests need a short window.
+    pub fn with_policy(capacity: usize, policy: RestartPolicy) -> Self {
         Self {
             capacity: capacity.max(1),
+            policy,
+            restarts: Arc::new(Mutex::new(HashMap::new())),
             slots: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -123,6 +172,55 @@ impl KernelPool {
             let mut slots = pool.slots.lock().await;
             slots.remove(&route);
         });
+    }
+
+    /// Decide whether this route may be started again, and what to wait first.
+    ///
+    /// Returns the delay to observe before spawning. The first restart after a quiet period is
+    /// immediate — a crashed kernel that nothing has touched for a while is not a loop, and making
+    /// the user wait half a second for no reason is its own bug.
+    pub async fn restart_delay(&self, route: &Route) -> Result<Duration, RestartError> {
+        let mut restarts = self.restarts.lock().await;
+        let history = restarts.entry(route.clone()).or_default();
+        let now = Instant::now();
+        history.retain(|at| now.duration_since(*at) <= self.policy.window);
+
+        if history.len() >= self.policy.max_restarts {
+            return Err(RestartError::GivingUp {
+                route: route.to_string(),
+                attempts: history.len(),
+                window: self.policy.window,
+            });
+        }
+
+        let delay = if history.is_empty() {
+            Duration::ZERO
+        } else {
+            let doublings = (history.len() - 1).min(16) as u32;
+            self.policy
+                .base_delay
+                .saturating_mul(1u32 << doublings)
+                .min(self.policy.max_delay)
+        };
+        history.push(now);
+        Ok(delay)
+    }
+
+    /// Forget the restart history of a route that has been healthy for long enough.
+    ///
+    /// Called after a successful handshake: a kernel that answered is not part of a crash loop,
+    /// so the next crash starts counting from zero.
+    pub async fn restarted_successfully(&self, route: &Route) {
+        self.restarts.lock().await.remove(route);
+    }
+
+    /// How many restarts this route has had inside the window.
+    pub async fn restart_count(&self, route: &Route) -> usize {
+        let mut restarts = self.restarts.lock().await;
+        let now = Instant::now();
+        let history = restarts.entry(route.clone()).or_default();
+        history.retain(|at| now.duration_since(*at) <= self.policy.window);
+        history.len()
     }
 
     /// Drop a route without shutting anything down. Used by the exit watcher.
@@ -249,5 +347,116 @@ mod tests {
     async fn releasing_something_that_was_never_started_is_not_an_error() {
         let pool = KernelPool::new(1);
         assert!(!pool.release(&route("a"), Duration::from_millis(1)).await);
+    }
+}
+
+#[cfg(test)]
+mod restart_tests {
+    use super::*;
+
+    fn route() -> Route {
+        Route::new("p", "m")
+    }
+
+    #[tokio::test]
+    async fn the_first_restart_after_a_quiet_period_is_immediate() {
+        // A kernel that crashed a while ago is not a crash loop; making the user wait would be a
+        // bug of its own.
+        let pool = KernelPool::with_policy(2, RestartPolicy::default());
+        assert_eq!(
+            pool.restart_delay(&route()).await.expect("allowed"),
+            Duration::ZERO
+        );
+        assert_eq!(pool.restart_count(&route()).await, 1);
+    }
+
+    #[tokio::test]
+    async fn delays_double_up_to_the_cap() {
+        let policy = RestartPolicy {
+            max_restarts: 10,
+            window: Duration::from_secs(600),
+            base_delay: Duration::from_millis(100),
+            max_delay: Duration::from_millis(400),
+        };
+        let pool = KernelPool::with_policy(2, policy);
+        let route = route();
+
+        let mut delays = Vec::new();
+        for _ in 0..5 {
+            delays.push(pool.restart_delay(&route).await.expect("allowed"));
+        }
+
+        assert_eq!(
+            delays,
+            vec![
+                Duration::ZERO,             // first: immediate
+                Duration::from_millis(100), // 2^0
+                Duration::from_millis(200), // 2^1
+                Duration::from_millis(400), // 2^2, at the cap
+                Duration::from_millis(400), // stays at the cap
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_crash_loop_is_refused_instead_of_retried_forever() {
+        let policy = RestartPolicy {
+            max_restarts: 3,
+            window: Duration::from_secs(60),
+            ..RestartPolicy::default()
+        };
+        let pool = KernelPool::with_policy(2, policy);
+        let route = route();
+
+        for _ in 0..3 {
+            pool.restart_delay(&route).await.expect("allowed");
+        }
+        let refused = pool.restart_delay(&route).await.expect_err("refused");
+
+        match refused {
+            RestartError::GivingUp { attempts, .. } => assert_eq!(attempts, 3),
+        }
+        // The message has to be actionable: it names the route and the window.
+        let message = refused.to_string();
+        assert!(message.contains("p/m"), "{message}");
+        assert!(message.contains("crashed 3 times"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn a_successful_handshake_clears_the_history() {
+        let policy = RestartPolicy {
+            max_restarts: 2,
+            window: Duration::from_secs(60),
+            ..RestartPolicy::default()
+        };
+        let pool = KernelPool::with_policy(2, policy);
+        let route = route();
+        pool.restart_delay(&route).await.expect("allowed");
+        pool.restart_delay(&route).await.expect("allowed");
+        assert!(pool.restart_delay(&route).await.is_err());
+
+        // The kernel answered this time: whatever was wrong is no longer worth counting.
+        pool.restarted_successfully(&route).await;
+        assert_eq!(pool.restart_count(&route).await, 0);
+        pool.restart_delay(&route).await.expect("allowed again");
+    }
+
+    #[tokio::test]
+    async fn the_window_forgets_old_crashes() {
+        let policy = RestartPolicy {
+            max_restarts: 2,
+            window: Duration::from_millis(120),
+            base_delay: Duration::from_millis(10),
+            max_delay: Duration::from_millis(10),
+        };
+        let pool = KernelPool::with_policy(2, policy);
+        let route = route();
+        pool.restart_delay(&route).await.expect("allowed");
+        pool.restart_delay(&route).await.expect("allowed");
+        assert!(pool.restart_delay(&route).await.is_err(), "at the ceiling");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(pool.restart_count(&route).await, 0, "the window has passed");
+        pool.restart_delay(&route).await.expect("allowed again");
     }
 }

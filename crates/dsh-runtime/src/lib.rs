@@ -42,7 +42,7 @@ pub mod process;
 pub mod prompt;
 pub mod protocol;
 
-pub use pool::{KernelPool, Route};
+pub use pool::{KernelPool, RestartError, RestartPolicy, Route};
 pub use process::{
     ExitStatus, KernelClient, KernelConfig, LIVE_CHUNK_METHOD, LIVE_PREFIX, RuntimeError,
     kernel_entry,

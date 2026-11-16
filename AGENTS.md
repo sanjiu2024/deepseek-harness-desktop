@@ -94,6 +94,22 @@ Cleanup after a build experiment: `pnpm clean` (report) → `pnpm clean:apply` (
 5. **Generated bindings are read-only.** `src/lib/ipc.ts` comes from `tauri-specta`; edit the
    Rust command, not the generated file.
 
+## 对内核的行为要问内核
+
+有三件事读文档读不出来，只能对真内核发一次请求：分叉出来的会话认不认、图片块形状对不对、
+内核死了池能不能重来。它们各自有一个测试，靠 `DSH_DESKTOP_HOME` / `DSH_DESKTOP_KERNEL`
+决定跑还是跳过：
+
+```
+crates/dsh-runtime/tests/fork_resume.rs     resume 一个复制出来的会话
+crates/dsh-runtime/tests/prompt_blocks.rs   发一个带图片块的 prompt
+crates/dsh-runtime/tests/restart.rs         杀掉内核，看池能不能再起一个
+```
+
+新增"我们造了内核本该自己写的数据"这类功能时，配一个这样的测试。它们抓到的都是猜不出来的
+东西：`SessionHeader` 少 `type`、可选字段序列化成 `null` 被判非法、`session/prompt` 其实是
+创建语义。
+
 ## Style
 
 - Rust: `rustfmt` defaults, `clippy -D warnings`, `thiserror` for domain errors.

@@ -181,15 +181,74 @@ pub async fn kernel_initialize(
         params["reasoningEffort"] = serde_json::Value::String(effort);
     }
 
+    let remembered = params.clone();
     let result = client.initialize(params, Duration::from_secs(30)).await;
     match &result {
         Ok(value) => tracing::debug!(target: "dsh_desktop_app", ?value, "kernel_initialize ok"),
         Err(error) => tracing::warn!(target: "dsh_desktop_app", %error, "kernel_initialize failed"),
     }
     if result.is_ok() {
+        state
+            .initialized
+            .lock()
+            .expect("init lock")
+            .insert(route.clone(), remembered);
+        state.pool.restarted_successfully(&route).await;
         state.set_current_route(route);
     }
     result.map_err(|error| error.to_string())
+}
+
+/// The kernel for this route, restarting it if it died.
+///
+/// A crashed kernel is forgotten by the pool, so without this the app would answer "the kernel is
+/// not running" for every message until it was restarted by hand. The restart is bounded: the
+/// pool's policy refuses a route that keeps dying, and the error says how often it crashed.
+async fn ensure_ready(
+    app: &AppHandle,
+    state: &AppState,
+    route: &Route,
+) -> Result<Arc<KernelClient>, String> {
+    if let Some(client) = state.pool.existing(route).await {
+        return Ok(client);
+    }
+
+    let delay = state
+        .pool
+        .restart_delay(route)
+        .await
+        .map_err(|error| error.to_string())?;
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
+    tracing::warn!(target: "dsh_desktop_app", %route, ?delay, "kernel is gone; starting a new one");
+
+    let client = acquire(app, state, route).await?;
+    let params = state
+        .initialized
+        .lock()
+        .expect("init lock")
+        .get(route)
+        .cloned();
+    let params = match params {
+        Some(params) => params,
+        None => {
+            serde_json::json!({
+                "cwd": std::env::current_dir().map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| ".".to_owned()),
+                "provider": route.provider,
+                "model": route.model,
+                "approvalRequests": true,
+                "capabilities": { "userQuestions": true },
+            })
+        }
+    };
+    client
+        .initialize(params, Duration::from_secs(30))
+        .await
+        .map_err(|error| format!("the kernel came back but would not initialize: {error}"))?;
+    state.pool.restarted_successfully(route).await;
+    Ok(client)
 }
 
 /// Call any SDK method.
@@ -199,17 +258,14 @@ pub async fn kernel_initialize(
 /// places to drift. Errors keep the kernel's own code and message.
 #[tauri::command]
 pub async fn kernel_call(
+    app: AppHandle,
     state: State<'_, AppState>,
     method: String,
     params: serde_json::Value,
     timeout_ms: Option<u64>,
 ) -> Result<serde_json::Value, String> {
     let route = state.current_route();
-    let client = state
-        .pool
-        .existing(&route)
-        .await
-        .ok_or_else(|| "the kernel is not running".to_owned())?;
+    let client = ensure_ready(&app, &state, &route).await?;
     ensure_known_session(&state, &client, &route, &method, &params).await;
     let timeout = timeout_ms.map(Duration::from_millis);
     client

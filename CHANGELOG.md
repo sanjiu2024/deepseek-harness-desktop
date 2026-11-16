@@ -58,6 +58,35 @@ front end                          → 84 (file-tree fixtures follow the new lis
 cargo clippy --workspace --all-targets --release -D warnings → clean
 ```
 
+### Added — a crashed kernel comes back on the next message
+
+A dead kernel used to mean "restart the application": the pool forgot it, and every call answered
+"the kernel is not running". `kernel_call` now restarts it, bounded by a policy:
+
+| Situation | Behaviour |
+| --- | --- |
+| kernel alive | used as-is |
+| crashed, last crash > 120 s ago | restarted **immediately** |
+| crashed 1–4 times inside 120 s | 0.5 s → 1 s → 2 s → 4 s backoff (capped at 8 s) |
+| 5 crashes inside 120 s | refused, with an error naming how often it crashed |
+
+A successful handshake clears the count — a kernel that answered is not part of a crash loop. The
+restart replays the `initialize` params that last worked, because a fresh process does not know the
+provider, the model or the cwd.
+
+The restart is **lazy** on purpose: an eager background watcher would race the user's own restart,
+route switch and quit. Nothing is waiting on a kernel nobody is using.
+
+### Verified
+
+```
+cargo test -p dsh-runtime --release --lib restart → 5 (policy: immediate first, doubling, ceiling, reset, window)
+DSH_DESKTOP_HOME=… cargo test -p dsh-runtime --test restart
+  → kernel shut down · pool forgot it · restart allowed immediately · second kernel on the same route
+cargo test --workspace --release → 120
+cargo clippy --workspace --all-targets --release -D warnings → exit 0
+```
+
 ### Fixed — images would accumulate in the kernel's attachment store forever
 
 Nothing deletes `$DSH_HOME/attachments/v1/objects/`. Deleting a session does not remove its images,

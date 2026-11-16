@@ -137,6 +137,12 @@ pub struct AppState {
     pub workspace: PathBuf,
     /// One kernel per route. See `dsh_runtime::pool` for why a route needs its own process.
     pub pool: KernelPool,
+    /// The initialize params that last worked, per route.
+    ///
+    /// A restarted kernel is a blank process: it does not know the provider, the model or the
+    /// cwd. Replaying the params that worked is what makes the kernel coming back true rather
+    /// than a new process merely running.
+    pub initialized: std::sync::Mutex<std::collections::HashMap<Route, serde_json::Value>>,
     /// Routes whose frame readers are already attached, so a reused kernel does not get a
     /// second set of forwarders and emit every event twice.
     pub forwarded: Mutex<std::collections::HashSet<Route>>,
@@ -185,6 +191,7 @@ impl AppState {
             kernel_dir,
             bridge_dir,
             pool: KernelPool::new(capacity),
+            initialized: std::sync::Mutex::new(std::collections::HashMap::new()),
             forwarded: Mutex::new(std::collections::HashSet::new()),
             route: Mutex::new(Route::new(
                 Settings::load(&home).provider,

@@ -19,3 +19,5 @@ tracing.workspace = true
 # Dev-only on purpose — `dsh-store` must never depend on the runtime, and the runtime must not
 # depend on the store at runtime either.
 dsh-store = { path = "../dsh-store" }
+# The restart tests need a clock they can advance without sleeping for real.
+tokio = { version = "1", features = ["full", "test-util"] }
